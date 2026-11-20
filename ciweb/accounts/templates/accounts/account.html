@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}My account{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>My account</h1></div></div>
+<div class="card wide">
+  <dl class="meta">
+    <div><dt>User name</dt><dd>{{ user.username }}</dd></div>
+    <div><dt>Email</dt><dd>{{ user.email }}{% if not user.email_verified %} <span class="muted small">(not confirmed)</span>{% endif %}</dd></div>
+  </dl>
+  <p><a class="btn" href="{% url 'password_change' %}">Change password</a></p>
+</div>
+{% endblock %}

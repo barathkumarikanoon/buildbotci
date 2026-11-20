@@ -1,0 +1,257 @@
+{
+  "unmapped": "full",
+  "context_markers": [
+    "^RELURL:\\s*(.+)$",
+    "^docid:\\s*(\\d+)",
+    "^(\\d+ .+ \\| .+)$"
+  ],
+  "ignore": [
+    "*.md",
+    ".gitignore",
+    "configs/*",
+    "releases/*",
+    "publicity/*",
+    "regressions/hub/*",
+    "regressions/diffs/*",
+    "regressions/output/*",
+    "website/pylaw/templates/*",
+    "website/pylaw/static/*",
+    "judis/*",
+    "apiclients/*",
+    "apps/*",
+    "manupatra/*",
+    "openbooklive/*",
+    "machinelearning/*",
+    "manual_mods/*"
+  ],
+  "full": [
+    "storage_manager.py",
+    "model/*",
+    "setup/data_srcs.py",
+    "requirements.txt",
+    "regressions/regression.py",
+    "regressions/runner.py",
+    "regressions/utils.py"
+  ],
+  "rules": [
+    {
+      "name": "layout engine",
+      "paths": [
+        "utils/layout.py",
+        "utils/legallayout/*"
+      ],
+      "modules": [
+        "layout",
+        "structural",
+        "enrichment"
+      ]
+    },
+    {
+      "name": "enrichment",
+      "paths": [
+        "enrichment/*"
+      ],
+      "modules": [
+        "layout",
+        "structural",
+        "enrichment",
+        "cite_extract",
+        "citetext",
+        "citelaw"
+      ]
+    },
+    {
+      "name": "document analysis",
+      "paths": [
+        "utils/tokenizer.py",
+        "utils/summary.py",
+        "utils/structural.py",
+        "utils/words_match.py",
+        "utils/judgment_header.py"
+      ],
+      "modules": [
+        "layout",
+        "structural",
+        "header",
+        "header_words"
+      ]
+    },
+    {
+      "name": "court module",
+      "paths": [
+        "judgments/*.py"
+      ],
+      "tests": [
+        "*.{name}*"
+      ],
+      "aliases": {
+        "newdelhi": [
+          "delhi"
+        ],
+        "sc": [
+          "judis"
+        ],
+        "chennai": [
+          "madras"
+        ],
+        "gauhati": [
+          "ghecourt",
+          "itanagar",
+          "kohima",
+          "aizawl"
+        ],
+        "jammu": [
+          "srinagar"
+        ],
+        "kolkata": [
+          "jalpaiguri",
+          "portblair"
+        ],
+        "nclt": [
+          "nclt_insolvency"
+        ]
+      },
+      "fallback_modules": [
+        "header",
+        "structural",
+        "commonfuncs"
+      ]
+    },
+    {
+      "name": "court test data",
+      "paths": [
+        "regressions/tests/*_docs",
+        "regressions/tests/*_lawyer_test"
+      ],
+      "tests": [
+        "*.{name}*"
+      ],
+      "fallback_modules": [
+        "header",
+        "structural",
+        "commonfuncs"
+      ],
+      "aliases": {
+        "nclt_*": [
+          "nclt_insolvency"
+        ],
+        "newdelhi": [
+          "delhi"
+        ]
+      }
+    },
+    {
+      "name": "layout test data",
+      "paths": [
+        "regressions/tests/layout_docs"
+      ],
+      "modules": [
+        "layout"
+      ]
+    },
+    {
+      "name": "text conversion",
+      "paths": [
+        "utils/html_to_text.py",
+        "utils/commonfuncs.py",
+        "utils/pdf2txt.py",
+        "utils/wrap_text.py",
+        "utils/unicode_ops.py",
+        "htmldoc/*"
+      ],
+      "modules": [
+        "commonfuncs",
+        "header",
+        "layout"
+      ]
+    },
+    {
+      "name": "citation extraction",
+      "paths": [
+        "utils/extract_cites.py",
+        "utils/cite_ops.py",
+        "utils/citetext.py",
+        "utils/citelaw.py",
+        "utils/phrasematch.py",
+        "citations/*"
+      ],
+      "modules": [
+        "cite_extract",
+        "citetext",
+        "citelaw",
+        "resolution"
+      ]
+    },
+    {
+      "name": "correlation",
+      "paths": [
+        "correlate/*"
+      ],
+      "modules": [
+        "resolution",
+        "cite_extract"
+      ]
+    },
+    {
+      "name": "acts",
+      "paths": [
+        "acts/*",
+        "lawsofindia/*",
+        "lawcommission/*"
+      ],
+      "modules": [
+        "lawsik",
+        "resolution",
+        "cite_extract"
+      ]
+    },
+    {
+      "name": "search",
+      "paths": [
+        "website/pylaw/search/*",
+        "postgres/*"
+      ],
+      "modules": [
+        "search",
+        "causelist"
+      ]
+    },
+    {
+      "name": "causelists",
+      "paths": [
+        "causelist/*",
+        "website/pylaw/causelists/*"
+      ],
+      "modules": [
+        "causelists",
+        "casealert",
+        "causelist"
+      ]
+    },
+    {
+      "name": "debates",
+      "paths": [
+        "debates/*",
+        "scr/*"
+      ],
+      "modules": [
+        "loksabha",
+        "resolution",
+        "cite_extract"
+      ]
+    },
+    {
+      "name": "xml and serialization",
+      "paths": [
+        "utils/xml_ops.py",
+        "utils/xmlExtract.py",
+        "utils/annotationhelper.py"
+      ],
+      "modules": [
+        "serialization",
+        "cite_extract",
+        "enrichment"
+      ]
+    }
+  ]
+}

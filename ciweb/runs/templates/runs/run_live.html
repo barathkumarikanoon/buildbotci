@@ -1,0 +1,72 @@
+{% load ci_tags %}{% if run.message %}<div class="flash {{ message_class }}">{{ run.message }}</div>{% endif %}
+
+{% if total %}
+<div class="card wide">
+  <div class="progress" title="{{ done }} of {{ total }} finished">
+    {% for seg in segments %}<span class="seg {{ seg.key }}" style="width: {{ seg.width|stringformat:'f' }}%"></span>{% endfor %}
+  </div>
+  <div class="tally">
+    <a class="all" href="{{ all_url }}">All {{ total }}</a>
+    {% for t in tally %}<a class="badge {{ t.key }}" href="{{ t.url }}">{{ t.count }} {{ t.label }}</a>{% endfor %}
+    {% if run.current %}<span class="now">running <span class="mono">{{ run.current }}</span></span>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if shards %}
+<div class="section-title"><h2>Workers</h2><span class="muted small">each module runs on one worker at a time</span></div>
+<div class="shards">
+  {% for s in shards %}
+  <div class="shard">
+    <div class="row"><span class="muted small">Shard {{ s.index }}{% if s.worker %} · {{ s.worker }}{% endif %}</span><span class="badge {{ s.cls }}">{{ s.state|label }}</span></div>
+    <div class="mods">{{ s.modules_text }}</div>
+    <div class="meta-line">{% if s.build_url %}<a href="{{ s.build_url }}">Buildbot build #{{ s.build_number }} ↗</a>{% else %}<span>waiting for a worker</span>{% endif %}</div>
+    {% if s.message %}<div class="note">{{ s.message }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if selection %}
+<details class="sel">
+  <summary>How these tests were chosen: <strong>{{ selection.mode }}</strong>
+    {% if selection.base %}· changes since <span class="mono">{{ selection.base_short }}</span>{% endif %}
+    {% if selection.changed_count %}· {{ selection.changed_count }} changed files{% endif %}
+  </summary>
+  {% if selection.specs %}<p>Requested: <span class="mono">{{ selection.specs_text }}</span></p>{% endif %}
+  {% if selection.full %}<p class="bad">Full run triggered by files with no narrower mapping.</p>{% endif %}
+  {% if selection.unmapped %}<p>Unmapped files (forced a full run): <span class="mono">{{ selection.unmapped_text }}</span></p>{% endif %}
+  {% if selection.changed_files %}
+  <details><summary>Changed files</summary><ul class="mono small">{% for f in selection.changed_files %}<li>{{ f }}</li>{% endfor %}</ul></details>
+  {% endif %}
+</details>
+{% endif %}
+
+<div class="section-title"><h2>Tests</h2><span class="muted small">failures come first</span></div>
+<div class="card flush">
+  <form class="toolbar" method="get">
+    <input class="grow" type="search" name="q" value="{{ q }}" placeholder="Filter by test name…">
+    <select name="status" onchange="this.form.submit()">
+      <option value="">All statuses</option>
+      <option value="failing"{% if failing_selected %} selected{% endif %}>Failing only</option>
+      {% for o in status_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label|capfirst }}</option>{% endfor %}
+    </select>
+    <button type="submit">Filter</button>
+    {% if rerun_url %}<a class="btn primary spacer" href="{{ rerun_url }}">Re-run {{ failing_count }} failing</a>{% endif %}
+  </form>
+  <table class="grid tests-table">
+    <thead><tr><th>Status</th><th>Test</th><th>What went wrong</th><th class="right">Time</th></tr></thead>
+    <tbody>
+    {% for t in rows %}
+      <tr class="row-{{ t.status }}">
+        <td><span class="badge {{ t.status }}">{{ t.status|label }}</span></td>
+        <td><a href="{{ t.url }}" class="test-name">{{ t.id }}</a></td>
+        <td class="why small">{{ t.reason|truncatechars:160 }}</td>
+        <td class="time">{{ t.duration_text }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4" class="empty-row">{% if not has_tests %}No tests in this run.{% else %}No tests match this filter.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>

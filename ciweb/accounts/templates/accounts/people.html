@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block title %}People{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>People</h1><p class="sub">Approve new sign-ups and manage who can start runs.</p></div></div>
+
+<div class="section-title"><h2>Waiting for approval</h2><span class="count{% if not waiting %} plain{% endif %}">{{ waiting|length }}</span></div>
+<section class="card flush wide queue{% if waiting %} has-items{% endif %}">
+  {% if waiting %}
+  <table class="grid people">
+    <thead><tr><th>User name</th><th>Email</th><th>Email confirmed</th><th>Signed up</th><th></th></tr></thead>
+    <tbody>
+    {% for p in waiting %}
+      <tr>
+        <td><span class="who-cell"><span class="avatar sm">{{ p.username|first|upper }}</span><strong>{{ p.username }}</strong></span></td>
+        <td>{{ p.email }}</td>
+        <td>{% if p.email_verified %}<span class="badge passed">yes</span>{% else %}<span class="badge pending plain">not yet</span>{% endif %}</td>
+        <td class="muted">{{ p.joined|date:'d M H:i' }}</td>
+        <td class="row-actions">
+          <form method="post" action="{% url 'person_action' p.id 'approve' %}" class="inline-form">{% csrf_token %}<button type="submit" class="btn primary">Approve</button></form>
+          <form method="post" action="{% url 'person_action' p.id 'reject' %}" class="inline-form" onsubmit="return confirm('Reject and remove the sign-up of {{ p.username|escapejs }}?')">{% csrf_token %}<button type="submit">Reject</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty-row">Nobody is waiting. New sign-ups appear here and in the banner at the top of every page.</p>
+  {% endif %}
+</section>
+
+<div class="section-title"><h2>Everyone else</h2><span class="count plain">{{ others|length }}</span></div>
+<section class="card flush wide">
+  <table class="grid people">
+    <thead><tr><th>User name</th><th>Email</th><th>State</th><th>Last sign-in</th><th></th></tr></thead>
+    <tbody>
+    {% for p in others %}
+      <tr>
+        <td><span class="who-cell"><span class="avatar sm">{{ p.username|first|upper }}</span><strong>{{ p.username }}</strong></span>{% if p.staff %} <span class="badge running plain">administrator</span>{% endif %}{% if p.id == me %} <span class="muted small">(you)</span>{% endif %}</td>
+        <td>{{ p.email }}{% if not p.email_verified %} <span class="muted small">(not confirmed)</span>{% endif %}</td>
+        <td>{% if p.state == 'active' %}<span class="badge passed">active</span>{% else %}<span class="badge failed">{{ p.state }}</span>{% endif %}{% if p.locked %} <span class="badge error">locked</span>{% endif %}</td>
+        <td class="muted">{% if p.last_login %}{{ p.last_login|date:'d M H:i' }}{% else %}never{% endif %}</td>
+        <td class="row-actions">
+          {% if p.state == 'disabled' %}<form method="post" action="{% url 'person_action' p.id 'approve' %}" class="inline-form">{% csrf_token %}<button type="submit">Enable</button></form>{% endif %}
+          {% if p.state == 'active' and p.id != me %}<form method="post" action="{% url 'person_action' p.id 'disable' %}" class="inline-form" onsubmit="return confirm('Disable {{ p.username|escapejs }}? They are signed out at once.')">{% csrf_token %}<button type="submit">Disable</button></form>{% endif %}
+          {% if p.locked %}<form method="post" action="{% url 'person_action' p.id 'unlock' %}" class="inline-form">{% csrf_token %}<button type="submit">Unlock</button></form>{% endif %}
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" class="muted">No other accounts yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small foot-note">More options (staff rights, editing emails) are in the <a href="/admin/accounts/user/">admin site</a>.</p>
+</section>
+{% endblock %}

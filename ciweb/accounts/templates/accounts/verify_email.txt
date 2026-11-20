@@ -1,0 +1,7 @@
+Hello {{ user.username }},
+
+Confirm your email address by opening this link within {{ hours }} hours:
+
+{{ link }}
+
+If you did not sign up, ignore this message.

@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Form not accepted{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>The form was not accepted</h1></div></div>
+<div class="card wide">
+  <p>The page you submitted could not be checked as coming from this site, so nothing was changed. Usually it is enough to go back, reload the page and send the form again.</p>
+  <ul>
+    <li>Open the site at the address your administrator gave you{% if public_url %}: <span class="mono">{{ public_url }}</span>{% endif %}. You are on <span class="mono">{{ host }}</span>.</li>
+    <li>Cookies must be allowed for this address. A private window with cookies blocked fails this check.</li>
+    <li>Do not submit a saved or old copy of a page.</li>
+  </ul>
+  <p class="muted small">Technical reason: {{ reason }}</p>
+  <p><a class="btn" href="{% url 'index' %}">Back to the runs</a></p>
+</div>
+{% endblock %}

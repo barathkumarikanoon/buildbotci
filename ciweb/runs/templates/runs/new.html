@@ -1,0 +1,144 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Run tests{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Run regression tests</h1>
+    <p class="sub">Pick what to run. The worker fetches the branch and tests its latest commit; the run is recorded under your name, <strong>{{ user.username }}</strong>.</p>
+  </div>
+</div>
+{% if not configured %}<div class="flash error">REG_BUILDBOT_URL is not set, so runs cannot be queued from this page.</div>{% endif %}
+
+<nav class="branch-tabs" aria-label="Branch">
+  {% for tab in branch_tabs %}
+  <a href="{{ tab.url }}" class="branch-tab {{ tab.state }}{% if tab.current %} current{% endif %}"{% if tab.current %} aria-current="page"{% endif %}>
+    <span class="state-dot"></span>
+    <span class="bt-name">{{ tab.name }}</span>
+    <span class="bt-note">{% if tab.state == 'ready' %}{{ tab.tests }} test{{ tab.tests|pluralize }}{% elif tab.state == 'failed' %}failed to load{% else %}no list yet{% endif %}</span>
+  </a>
+  {% endfor %}
+</nav>
+
+{% if not catalog.tests %}
+<section class="empty-hero{% if catalog_error %} is-error{% endif %}">
+  <div class="eh-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M9 3.5h6v2.2a.8.8 0 01-.8.8H9.8a.8.8 0 01-.8-.8V3.5z"/><path d="M9 11h6M9 14.5h4"/></svg>
+  </div>
+  <div class="eh-body">
+    <h2>No test list for <strong>{{ branch }}</strong> yet</h2>
+    {% if catalog_error %}
+    <p class="eh-lead">Buildbot tried to list the tests of <strong>{{ branch }}</strong> and could not. Nothing is broken on your side.</p>
+    <div class="said">
+      <div class="said-head"><strong>The last refresh failed {{ catalog_error.ago }}</strong></div>
+      <p>{{ catalog_error.message }}</p>
+    </div>
+    {% else %}
+    <p class="eh-lead">The modules and tests you can pick from are read from GitLab by Buildbot. Press the button, wait about a minute, then reload this page.</p>
+    {% endif %}
+
+    <ol class="steps">
+      {% for step in steps %}
+      <li class="step{% if step.current %} current{% endif %}"><span class="n">{{ forloop.counter }}</span><div><strong>{{ step.title }}</strong><p>{{ step.text }}</p></div></li>
+      {% endfor %}
+    </ol>
+
+    <form method="post" action="{{ refresh_url }}" class="eh-actions">
+      {% csrf_token %}
+      <input type="hidden" name="branch" value="{{ branch }}">
+      <button type="submit" class="btn primary big">Refresh from GitLab</button>
+      {% for r in ready_branches %}<a class="btn big" href="{{ r.url }}">Use {{ r.name }} instead <span class="muted">· {{ r.tests }} tests</span></a>{% endfor %}
+    </form>
+
+    <details class="help">
+      <summary>Still empty after a minute?</summary>
+      <ul>
+        <li>Buildbot's master and worker must be running{% if builds_url %} (<a href="{{ builds_url }}">see the builders</a>){% endif %}.</li>
+        <li>The branch must contain the <span class="mono">regression.py</span> change that lists the modules.</li>
+        <li>Open the latest <span class="mono">regression-catalog</span> build in Buildbot to see the reason.</li>
+      </ul>
+    </details>
+  </div>
+</section>
+
+<details class="card run-all runform-wrap">
+  <summary>Skip the list and run everything on {{ branch }}</summary>
+  <form method="post" class="runform">
+    {% csrf_token %}
+    {% if catalog_error %}<div class="flash error">This branch has no test list, so a full run may fail on the worker.</div>{% endif %}
+    <p class="muted">It runs the latest commit of the branch and is recorded as <strong>{{ user.username }}</strong>.</p>
+    <input type="hidden" name="mode" value="all">
+    <input type="hidden" name="branch" value="{{ branch }}">
+    <label class="field"><span>Reason</span><input name="reason" placeholder="Why are you running this?"></label>
+    <button type="submit" class="btn primary"{% if not configured %} disabled{% endif %}>Run everything on {{ branch }}</button>
+  </form>
+</details>
+{% else %}
+
+<form method="post" id="runform" class="runform">
+  {% csrf_token %}
+  <div class="grid2">
+    <div>
+      <div class="card wide" id="picker">
+        <div class="picker-head">
+          <h2>Choose tests</h2>
+          <span class="muted small"><span class="sel-count" id="count"></span></span>
+        </div>
+        <div class="picker-bar">
+          <input type="search" id="filter" placeholder="Filter modules and tests…" autocomplete="off">
+          <button type="button" id="sel-visible">Select shown</button>
+          <button type="button" id="sel-none">Clear</button>
+          {% if failing_count %}<button type="button" id="sel-failing" data-ids="{{ failing }}">Select {{ failing_count }} failing in {{ failing_run }}</button>{% endif %}
+        </div>
+        <div class="module-list">
+        {% for module in modules %}
+          <details class="module" data-module="{{ module.name }}"{% if module.open %} open{% endif %}>
+            <summary>
+              <label><input type="checkbox" class="mod-toggle"> <strong>{{ module.name }}</strong></label>
+              <span class="mod-count" data-total="{{ module.count }}">0 / {{ module.count }}</span>
+              <span class="src">{{ module.source }}</span>
+            </summary>
+            <div class="tests-grid">
+              {% for t in module.tests %}
+              <label class="test" data-name="{{ t.id }}">
+                <input type="checkbox" name="tests" value="{{ t.id }}"{% if t.checked %} checked{% endif %}>
+                <span class="mono">{{ t.name }}</span>{% if t.no_baseline %} <span class="badge no_expected plain" title="No expected file yet">no baseline</span>{% endif %}
+              </label>
+              {% endfor %}
+            </div>
+          </details>
+        {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card">
+        <h2>Run summary</h2>
+        <div class="seg-control" role="radiogroup" aria-label="What to run">
+          <label><input type="radio" name="mode" value="explicit" checked><span>Selected tests<small>pick on the left</small></span></label>
+          <label><input type="radio" name="mode" value="all"><span>Everything<small>{{ test_count }} test{{ test_count|pluralize }}</small></span></label>
+        </div>
+        <label class="field"><span>Branch</span>
+          <select name="branch" onchange="location.href='{{ new_url }}?branch=' + encodeURIComponent(this.value)">{% for o in branch_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Reason <span class="muted">(optional)</span></span><input name="reason" placeholder="Why are you running this?"></label>
+        <div class="summary-box" id="summary" data-all="{{ test_count }}" data-modules="{{ module_count }}">
+          <span class="big" id="sum-big">0 tests</span>
+          <span id="sum-sub">Nothing selected yet.</span>
+        </div>
+        <button type="submit" class="btn primary big" id="submit" style="width:100%"{% if not configured %} disabled{% endif %} data-configured="{% if configured %}1{% else %}0{% endif %}">Queue run</button>
+        <p class="hint" id="submit-hint">Runs start as soon as a worker is free. Each worker runs one module at a time.</p>
+      </div>
+
+      <div class="card statusline">
+        <span class="info">Test list of <strong>{{ branch }}</strong>: {{ module_count }} module{{ module_count|pluralize }}, {{ test_count }} test{{ test_count|pluralize }}, read at commit <span class="mono">{{ revision_short }}</span>.
+        {% if catalog_error %}<br><span class="bad">The last refresh failed {{ catalog_error.ago }}: {{ catalog_error.message }}</span>{% endif %}</span>
+        <button type="submit" class="btn ghost" formaction="{{ refresh_url }}" formnovalidate>Refresh list</button>
+      </div>
+    </aside>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if catalog.tests %}<script src="{% static 'runs/picker.js' %}"></script>{% endif %}{% endblock %}

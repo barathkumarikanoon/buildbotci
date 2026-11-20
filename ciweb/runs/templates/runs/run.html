@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% load ci_tags %}
+{% block title %}{{ run.id }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="{{ index_url }}">Runs</a> / {{ run.id }}</div>
+
+<section class="hero {{ badge }}" id="hero">
+  <div>
+    <h1><span class="mono">{{ run.id }}</span> <span class="badge lg {{ badge }}" id="run-badge">{{ badge|label }}</span></h1>
+    <p class="headline">
+      {% if run.requested_by == 'Auto' %}Started automatically ({{ run.trigger }}){% else %}Started by <strong>{{ run.requested_by|default:run.trigger }}</strong>{% endif %}
+      on <strong>{{ run.branch }}</strong>{% if run.reason %} · “{{ run.reason }}”{% endif %}
+    </p>
+  </div>
+  {% if run.build.url %}<div class="acts"><a class="btn" href="{{ run.build.url }}">Open in Buildbot ↗</a></div>{% endif %}
+</section>
+
+<div class="card wide">
+  <dl class="meta">
+    <div><dt>Branch</dt><dd>{{ run.branch }}</dd></div>
+    <div><dt>Revision</dt><dd class="mono">{{ short_rev }}</dd></div>
+    <div><dt>Trigger</dt><dd>{{ run.trigger }}{% if run.requested_by %} · {{ run.requested_by }}{% endif %}</dd></div>
+    <div><dt>Started</dt><dd>{{ started_text }}</dd></div>
+    <div><dt>Duration</dt><dd id="run-duration">{{ duration }}</dd></div>
+    {% if run.build.url %}<div><dt>Buildbot</dt><dd><a href="{{ run.build.url }}">build {{ run.build.number }}</a></dd></div>{% endif %}
+  </dl>
+</div>
+
+<div id="live" data-live="{% if live %}1{% else %}0{% endif %}" data-url="{{ live_url }}" data-api="{{ api_url }}">
+  {% include 'runs/run_live.html' %}
+</div>
+
+<div class="console-head"><h2>Console</h2><span class="muted small">{% if live %}following live output{% else %}output of the run{% endif %}</span></div>
+<pre class="console" id="console" data-tail="{{ tail_url }}" data-live="{% if live %}1{% else %}0{% endif %}"></pre>
+{% endblock %}

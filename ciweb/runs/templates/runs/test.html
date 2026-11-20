@@ -1,0 +1,189 @@
+{% extends 'base.html' %}
+{% load ci_tags %}
+{% block title %}{{ item.id }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="{{ index_url }}">Runs</a> / <a href="{{ run_url }}">{{ run.id }}</a> / {{ item.id }}</div>
+
+<section class="hero {{ item.status }}" id="hero">
+  <div>
+    <h1><span class="mono">{{ item.id }}</span> <span class="badge lg {{ item.status }}" id="test-badge">{{ status_label }}</span></h1>
+    <p class="headline">Run <a href="{{ run_url }}" class="mono">{{ run.id }}</a> on <strong>{{ run.branch }}</strong> <span class="rev">{{ short_rev }}</span> · took <strong>{{ duration }}</strong></p>
+  </div>
+  <div class="acts"><a class="btn primary" href="{{ again_url }}">Run this test again</a></div>
+</section>
+
+{% if result %}
+<div class="card wide">
+  <dl class="meta">
+    {% if result.output %}<div><dt>Expected file</dt><dd class="mono">expected/{{ result.output }}</dd></div>{% endif %}
+    <div><dt>Expected size</dt><dd>{{ expected_size }}</dd></div>
+    <div><dt>Actual size</dt><dd>{{ actual_size }}</dd></div>
+    <div><dt>Duration</dt><dd>{{ duration }}</dd></div>
+  </dl>
+</div>
+{% endif %}
+
+<div class="tabs" role="tablist">
+  <a href="#analysis" data-tab="analysis" class="tab active">Analysis</a>
+  {% if files.diff %}<a href="#diff" data-tab="diff" class="tab">Diff <span class="pill">{{ total_hunks }}</span></a>{% endif %}
+  {% if files.expected %}<a href="#expected" data-tab="expected" class="tab" data-src="{{ raw.expected }}">Expected</a>{% endif %}
+  {% if files.actual %}<a href="#actual" data-tab="actual" class="tab" data-src="{{ raw.actual }}">Actual</a>{% endif %}
+  <a href="#log" data-tab="log" class="tab" data-src="{{ raw.log }}" data-live-tail="{{ tail_url }}" data-live="{% if running %}1{% else %}0{% endif %}">Log</a>
+</div>
+
+<section id="panel-analysis" class="panel active">
+  {% if show_files %}
+  <div class="card wide files">
+    <h2>Full files</h2>
+    <p class="muted small">The complete files, not just the first page of the diff. Download them to read or search them locally.</p>
+    <div class="file-rows">
+      {% for f in full_files %}
+      <div class="file-row">
+        <span class="kind">{{ f.label }}</span>
+        <span class="sz">{{ f.size }}</span>
+        <a class="btn{% if f.primary %} primary{% endif %}" href="{{ f.url }}">Download</a>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if item.status == 'passed' %}
+    <div class="flash ok"><strong>Output matched the expected file exactly.</strong></div>
+  {% elif waiting %}
+    <div class="flash info">{% if running %}This test is running now. Open the Log tab to follow it.{% else %}This test has not started yet.{% endif %}</div>
+  {% elif result %}
+    <div class="card wide">
+      <h2>Why it failed</h2>
+      <p class="reason">{{ result.reason|default:'No reason was recorded.' }}</p>
+
+      {% if item.status == 'failed' and result.diff %}
+        <div class="stats">
+          <div class="stat"><div class="v">{{ result.diff.hunks }}</div><div class="k">differing {{ hunks_word }}</div></div>
+          <div class="stat add"><div class="v">+{{ result.diff.added }}</div><div class="k">lines only in actual output</div></div>
+          <div class="stat del"><div class="v">−{{ result.diff.removed }}</div><div class="k">expected lines missing</div></div>
+          <div class="stat"><div class="v">{{ result.diff.first_line }}</div><div class="k">first difference, expected line</div></div>
+        </div>
+        {% if summary_rows %}
+        <details class="regions"{% if summary_count <= 30 %} open{% endif %}>
+        <summary>Differing regions <span class="muted small">· the first {{ summary_count }}, click to {% if summary_count <= 30 %}fold{% else %}unfold{% endif %}</span></summary>
+        <table class="grid">
+          <thead><tr><th>#</th><th>Expected line</th><th>Near</th><th>Change</th></tr></thead>
+          <tbody>
+          {% for h in summary_rows %}
+            <tr>
+              <td><a href="{{ h.url }}">{{ h.number }}</a></td>
+              <td class="mono">{{ h.line }}</td>
+              <td class="small">{{ h.label|default:'' }}</td>
+              <td><span class="add">+{{ h.added }}</span> <span class="del">-{{ h.removed }}</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </details>
+        {% if more_hunks %}<p class="muted small foot">Showing the first {{ summary_count }} regions; the Diff tab has all of them.</p>{% endif %}
+        {% endif %}
+      {% endif %}
+
+      {% if item.status == 'error' and result.error %}
+        <h3>Exception</h3>
+        <p class="mono bad">{{ result.error.type }}: {{ result.error.message }}</p>
+        {% if frames %}
+        <table class="grid frames">
+          <thead><tr><th>File</th><th>Line</th><th>Function</th><th>Code</th></tr></thead>
+          <tbody>
+          {% for f in frames %}
+            <tr class="{% if f.last %}last{% endif %}"><td class="mono small">{{ f.file }}</td><td>{{ f.line }}</td><td class="mono">{{ f.func }}</td><td class="mono small">{{ f.code }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+        <details><summary>Full traceback</summary><pre class="code">{{ result.error.traceback }}</pre></details>
+        {% if files.actual %}<p class="muted small">The test wrote partial output before failing; see the Actual tab.</p>{% endif %}
+      {% endif %}
+
+      {% if item.status == 'no_expected' %}
+        <p>The test ran, but there is no baseline to compare with. If the Actual output is correct, create the baseline and commit it:</p>
+        <pre class="code">cd regressions
+python regression.py -P {{ profile }} -m {{ result.module }} -t {{ result.name }} -p
+git add expected/{{ result.output }}</pre>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="flash error">No result was recorded for this test{% if run_ended %} (the run ended before it started){% endif %}.</div>
+  {% endif %}
+
+  <div class="card wide">
+    <h2>Reproduce on your machine</h2>
+    <pre class="code">cd &lt;the CI repository&gt;
+python runner.py --repo-dir &lt;your indianlaw checkout&gt; run --tests {{ item.id }} --profile {{ profile }} --branch {{ run.branch }}</pre>
+  </div>
+
+  {% if reasons %}
+  <div class="card wide">
+    <h2>Why this test was selected</h2>
+    <ul>{% for r in reasons %}<li class="small">{{ r }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  {% if history %}
+  <div class="card wide">
+    <h2>Recent history of this test</h2>
+    <div class="history">
+      {% for h in history %}<a class="dot {{ h.status }}" title="{{ h.run }} · {{ h.branch }} {{ h.revision }} · {{ h.status }}" href="{{ h.url }}"></a>{% endfor %}
+    </div>
+    <p class="muted small mt-md">Newest first. Hover a square for the run; click to open it.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% if files.diff %}
+<section id="panel-diff" class="panel">
+  <div class="filters">
+    <a class="btn{% if split %} primary{% endif %}" href="{{ split_url }}">Side by side</a>
+    <a class="btn{% if not split %} primary{% endif %}" href="{{ unified_url }}">Unified</a>
+    <a class="btn" href="{{ raw.diff }}?download=1">Download full diff</a>
+    <span class="muted small">left = expected, right = actual · page {{ page }} of {{ pages }}</span>
+  </div>
+  {% for h in hunks %}
+  <div class="hunk" id="h{{ h.number }}">
+    <div class="hunk-head">
+      <strong>#{{ h.number }}</strong>
+      <span>expected line {{ h.line }}</span>
+      <span class="add">+{{ h.added }}</span> <span class="del">-{{ h.removed }}</span>
+      {% if h.label %}<span class="muted">near {{ h.label }}</span>{% endif %}
+    </div>
+    {% if split %}
+    <table class="diff split">
+      {% for row in h.split %}
+      <tr>
+        <td class="ln">{{ row.lno|default_if_none:'' }}</td>
+        <td class="code {{ row.lcls }}">{{ row.ltext }}</td>
+        <td class="ln">{{ row.rno|default_if_none:'' }}</td>
+        <td class="code {{ row.rcls }}">{{ row.rtext }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <table class="diff unified">
+      {% for row in h.unified %}
+      <tr class="{{ row.tag }}"><td class="ln">{{ row.old|default_if_none:'' }}</td><td class="ln">{{ row.new|default_if_none:'' }}</td><td class="sign">{{ row.sign }}</td><td class="code">{{ row.text }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <div class="pager">
+    {% if prev_url %}<a class="btn" href="{{ prev_url }}">← Previous</a>{% endif %}
+    {% if next_url %}<a class="btn" href="{{ next_url }}">Next →</a>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% for kind in kinds %}
+<section id="panel-{{ kind }}" class="panel">
+  <div class="filters"><a class="btn" href="{% if kind == 'expected' %}{{ raw.expected }}{% elif kind == 'actual' %}{{ raw.actual }}{% else %}{{ raw.log }}{% endif %}?download=1">Download full {{ kind }}</a><span class="muted small" id="note-{{ kind }}"></span></div>
+  <pre class="code viewer" id="view-{{ kind }}">Loading…</pre>
+</section>
+{% endfor %}
+{% endblock %}

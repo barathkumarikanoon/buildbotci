@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block title %}Not allowed{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Not allowed</h1></div></div>
+<div class="card wide"><p>Only administrators can open this page.</p><p><a class="btn" href="{% url 'index' %}">Back to the runs</a></p></div>
+{% endblock %}

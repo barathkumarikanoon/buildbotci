@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% load ci_tags %}
+{% block title %}Runs{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Regression runs</h1>
+    <p class="sub">Every nightly and manual run, newest first. Click a run to see which tests passed and why the others did not.</p>
+  </div>
+  <a class="btn primary big" href="{% url 'new_run' %}">Run tests</a>
+</div>
+
+{% if last %}
+<div class="cards">
+  {% for item in last %}
+  <{% if item.url %}a href="{{ item.url }}"{% else %}div{% endif %} class="branch-card {{ item.badge }}">
+    <div class="label">Last scheduled run</div>
+    <div class="name">{{ item.branch }}{% if item.badge %} <span class="badge {{ item.badge }}">{{ item.badge|label }}</span>{% endif %}</div>
+    <div class="line"><span class="rev">{{ item.short }}</span><span>{{ item.ago }}</span></div>
+  </{% if item.url %}a{% else %}div{% endif %}>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if busy %}
+<div class="section-title"><h2>Running now</h2><span class="muted small">{{ busy|length }} run{{ busy|length|pluralize }} in progress</span></div>
+<div class="live-cards">
+  {% for r in busy %}
+  <a class="live-card" href="{{ r.url }}">
+    <div class="top-line"><span class="id mono">{{ r.id }}</span><span class="badge {{ r.state }}">{{ r.state|label }}</span></div>
+    <div class="progress thin">{% for seg in r.segments %}<span class="seg {{ seg.key }}" style="width: {{ seg.width|stringformat:'f' }}%"></span>{% endfor %}</div>
+    <div class="facts-line">
+      <span><strong>{{ r.branch }}</strong></span>
+      {% if r.counts %}<span>{{ r.done }} of {{ r.counts.total }} tests done</span>{% endif %}
+      {% if r.requested_by %}<span>by {{ r.requested_by }}</span>{% endif %}
+      {% if r.current %}<span class="mono">{{ r.current }}</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="section-title"><h2>History</h2><span class="muted small">{{ total }} run{{ plural }}</span></div>
+<div class="card flush">
+  <form class="toolbar" method="get">
+    <label>Branch
+      <select name="branch" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for o in branch_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Result
+      <select name="result" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for o in result_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Started by
+      <select name="by" onchange="this.form.submit()">
+        <option value="">Anyone</option>
+        {% for o in requester_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+  <div class="runs-table-wrap">
+  <table class="grid runs">
+    <thead><tr><th>Result</th><th>Run</th><th>Branch</th><th>Started by</th><th>Tests</th><th class="right">Duration</th><th class="right">Started</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr data-href="{{ r.url }}">
+        <td><span class="badge {{ r.badge }}">{{ r.badge|label }}</span></td>
+        <td class="id">
+          <a href="{{ r.url }}" class="mono">{{ r.id }}</a>
+          {% if r.reason %}<div class="why" title="{{ r.reason }}">{{ r.reason }}</div>{% endif %}
+        </td>
+        <td><span class="chip">{{ r.branch }}</span> <span class="rev">{{ r.short_rev }}</span></td>
+        <td>
+          {% if r.requested_by == 'Auto' %}<span class="chip auto">Auto · {{ r.trigger }}</span>
+          {% elif r.requested_by %}<span class="who-cell"><span class="avatar sm">{{ r.requested_by|first|upper }}</span>{{ r.requested_by }}</span>
+          {% else %}<span class="muted">{{ r.trigger }}</span>{% endif %}
+        </td>
+        <td class="tests">
+          {% if r.counts and r.counts.total %}
+            <div class="minibar">{% for seg in r.segments %}<span class="seg {{ seg.key }}" style="width: {{ seg.width|stringformat:'f' }}%"></span>{% endfor %}</div>
+            <div class="nums">
+              <span class="n-pass">{{ r.counts.passed }} passed</span>
+              {% if r.counts.failed %}<span class="n-fail">{{ r.counts.failed }} failed</span>{% endif %}
+              {% if r.counts.error %}<span class="n-err">{{ r.counts.error }} error{{ r.counts.error|pluralize }}</span>{% endif %}
+              {% if r.counts.no_expected %}<span class="n-warn">{{ r.counts.no_expected }} no baseline</span>{% endif %}
+            </div>
+          {% else %}<span class="muted">–</span>{% endif %}
+        </td>
+        <td class="right num">{{ r.duration }}</td>
+        <td class="right muted num">{{ r.started_text }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="7" class="empty-row">No runs yet. A run appears here once the nightly schedule fires or someone presses <strong>Run tests</strong>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="pager">
+  {% if newer %}<a class="btn" href="{{ newer }}">← Newer</a>{% endif %}
+  {% if older %}<a class="btn" href="{{ older }}">Older →</a>{% endif %}
+</div>
+{% endblock %}
