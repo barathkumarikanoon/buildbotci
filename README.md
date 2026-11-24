@@ -98,8 +98,14 @@ set -a; . ~/bb-master.env; set +a
 for i in 1 2 3; do
   buildbot-worker create-worker ~/.buildbotci/w$i localhost:9989 w$i "$BUILDBOT_WORKER_PASSWORD"
 done
-for i in 1 2 3; do buildbot-worker start ~/.buildbotci/w$i; done
+for i in 1 2 3; do
+  echo "CI admin <admin@indiankanoon.com>" > ~/.buildbotci/w$i/info/admin
+  echo "CI worker w$i" > ~/.buildbotci/w$i/info/host
+  buildbot-worker start ~/.buildbotci/w$i
+done
 ```
+
+The two `info/` lines are the name and description Buildbot's web page shows for each worker.
 
 The worker needs `git`, `REG_PYTHON`, the data directory (`DATADIR` in the checkout's `.env.local`, which must exist) and write access to `REG_RESULTS_DIR`. By default the worker uses the `DATADIR` that `.env.local` already sets. Only if it must differ on this machine, put it in a private file and set `REG_PROFILE_FILE` to that file (leave `REG_PROFILE_FILE` out otherwise: the profile step is then skipped).
 

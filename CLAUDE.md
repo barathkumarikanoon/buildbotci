@@ -75,6 +75,10 @@ The checkout folder must be named `indianlaw`, because the code imports `indianl
 
 Format of `~/bb-master.env`: one `KEY='value'` per line, without `export`, and a comment only on a line of its own, never after a value. systemd (`EnvironmentFile=`) skips lines that start with `export` and keeps a trailing comment as part of the value; the `bin/` scripts load the file with `set -a`, and the web UI reads it itself. Write paths as `'$HOME/...'` (or `'~/...'`) in single quotes, or as absolute paths; the master, the runner and the web UI expand them for the account that runs them. Do not set `HOME=` in the file and do not nest variables. Use absolute paths in the systemd units and inside `BUILDBOT_DB_URL`, which expand nothing (`%h` in a system unit is `/root`, not the home of `User=`).
 
+## Worker folders
+
+Each worker lives in `$REG_WORKERS_DIR/<name>` (`~/.buildbotci/w1`, ...), made by `buildbot-worker create-worker`. `buildbot.tac` holds the master address, the worker name and `BUILDBOT_WORKER_PASSWORD`. The two files in `info/` are shown in Buildbot's web page: `info/admin` (who looks after the worker, for example `CI admin <admin@indiankanoon.com>`) and `info/host` (a short description, for example `CI worker w1`). The worker sends them when it connects, so restart it after editing them. The builder folders `regression/`, `regression-shard/` and `regression-catalog/` hold the throwaway checkouts of `indianlaw` while a build runs; `runner.py sweep` removes the leftovers and looks only under `REG_WORKERS_DIR`.
+
 ## What happens on a schedule
 
 1. At each scheduled time (every night at 21:00 IST in your setup), the master starts one `regression` build per watched branch.
