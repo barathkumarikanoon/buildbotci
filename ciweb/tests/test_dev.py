@@ -101,7 +101,7 @@ class SettingsTest(SimpleTestCase):
         code = ("import sys; sys.argv = %r\nfrom ciweb import settings\n"
                 "print(settings.DEBUG, settings.TESTING, settings.RUNSERVER)" % (argv,))
         env = {k: v for k, v in os.environ.items() if not k.startswith(('REG_', 'BUILDBOT_'))}
-        env.update(REG_UI_SECRET = 'x', REG_UI_DB_URL = 'sqlite://', REG_ENV_FILE = '/nonexistent', PYTHONPATH = os.getcwd(), **extra)
+        env.update(REG_UI_SECRET = 'x', REG_UI_DB_URL = 'sqlite://', REG_RESULTS_DIR = '/tmp/results', REG_BRANCHES = 'main', REG_ENV_FILE = '/nonexistent', PYTHONPATH = os.getcwd(), **extra)
         done = subprocess.run([sys.executable, '-c', code], env = env, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
         self.assertEqual(done.returncode, 0, done.stderr.decode())
         return done.stdout.decode().split()

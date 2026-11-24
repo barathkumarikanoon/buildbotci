@@ -1058,8 +1058,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description = 'Structured regression runner')
     parser.add_argument('--repo-dir', default = None,
                         help = 'checkout of the code under test, named indianlaw (default: REG_REPO_DIR, else ../indianlaw)')
-    parser.add_argument('--results-dir', default = os.environ.get('REG_RESULTS_DIR',
-                        os.path.expanduser('~/regression-results')))
+    parser.add_argument('--results-dir', default = os.environ.get('REG_RESULTS_DIR'),
+                        required = 'REG_RESULTS_DIR' not in os.environ, help = 'default: REG_RESULTS_DIR')
     sub = parser.add_subparsers(dest = 'command', required = True)
 
     def common(p):
@@ -1070,7 +1070,7 @@ def get_parser():
 
     run = sub.add_parser('run')
     common(run)
-    run.add_argument('--profile', default = os.environ.get('REGRESSION_PROFILE', 'local'))
+    run.add_argument('--profile', default = os.environ.get('REGRESSION_PROFILE'), required = 'REGRESSION_PROFILE' not in os.environ)
     run.add_argument('--datasrc', nargs = '*', default = [])
     run.add_argument('--loglevel', default = 'info')
     run.add_argument('--run-id', default = '')
@@ -1083,7 +1083,7 @@ def get_parser():
 
     plan = sub.add_parser('plan')
     common(plan)
-    plan.add_argument('--profile', default = os.environ.get('REGRESSION_PROFILE', 'local'))
+    plan.add_argument('--profile', default = os.environ.get('REGRESSION_PROFILE'), required = 'REGRESSION_PROFILE' not in os.environ)
     plan.add_argument('--run-id', default = '')
     plan.add_argument('--trigger', default = '')
     plan.add_argument('--requested-by', default = '')
@@ -1096,7 +1096,7 @@ def get_parser():
     shard = sub.add_parser('shard')
     shard.add_argument('--run-id', required = True)
     shard.add_argument('--shard-index', type = int, required = True)
-    shard.add_argument('--profile', default = os.environ.get('REGRESSION_PROFILE', 'local'))
+    shard.add_argument('--profile', default = os.environ.get('REGRESSION_PROFILE'), required = 'REGRESSION_PROFILE' not in os.environ)
     shard.add_argument('--datasrc', nargs = '*', default = [])
     shard.add_argument('--loglevel', default = 'info')
     shard.add_argument('--worker', default = '')
@@ -1132,9 +1132,10 @@ def get_parser():
     profile.set_defaults(func = cmd_profile)
 
     sweep = sub.add_parser('sweep')
-    sweep.add_argument('--base', default = os.environ.get('REG_WORKERS_DIR', '~/.buildbotci'),
-                       help = 'folder that holds the worker folders (REG_WORKERS_DIR), default ~/.buildbotci')
-    sweep.add_argument('--buildbot-url', default = os.environ.get('REG_BUILDBOT_URL', 'http://localhost:8010/'))
+    sweep.add_argument('--base', default = os.environ.get('REG_WORKERS_DIR'), required = 'REG_WORKERS_DIR' not in os.environ,
+                       help = 'folder that holds the worker folders (default: REG_WORKERS_DIR)')
+    sweep.add_argument('--buildbot-url', default = os.environ.get('REG_BUILDBOT_URL'),
+                       required = 'REG_BUILDBOT_URL' not in os.environ, help = 'default: REG_BUILDBOT_URL')
     sweep.add_argument('--all', action = 'store_true',
                        help = 'remove every checkout; only for when Buildbot is stopped')
     sweep.add_argument('--dry-run', action = 'store_true', help = 'only list what would be removed')

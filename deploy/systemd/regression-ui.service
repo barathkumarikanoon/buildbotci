@@ -7,10 +7,10 @@ After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
-User=barath-kumar
-WorkingDirectory=/home/barath-kumar/buildbotci
-Environment=REG_UI_VENV=/home/barath-kumar/.buildbotci
-ExecStart=/home/barath-kumar/buildbotci/bin/run-ui
+User=sushant
+WorkingDirectory=/home/sushant/buildbotci
+Environment=REG_UI_VENV=/home/sushant/.buildbotci
+ExecStart=/home/sushant/buildbotci/bin/run-ui
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5

@@ -20,6 +20,16 @@ def env(name, default = ''):
     return os.environ.get(name, default)
 
 
+def required(name, test_value = ''):
+    """A setting that has no default: the site refuses to start without it (the unit tests get a fixed value)."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    if TESTING:
+        return test_value
+    raise ImproperlyConfigured('%s is not set. Put it in the settings file (~/bb-master.env).' % name)
+
+
 SECRET_KEY = env('REG_UI_SECRET')
 if not SECRET_KEY:
     if not TESTING:
@@ -157,12 +167,12 @@ DEFAULT_FROM_EMAIL  = env('REG_SMTP_FROM')
 MAIL_CONFIGURED     = bool(EMAIL_HOST and DEFAULT_FROM_EMAIL and PUBLIC_URL)
 EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend' if MAIL_CONFIGURED else 'django.core.mail.backends.dummy.EmailBackend'
 
-RESULTS_DIR       = os.path.expanduser(os.path.expandvars(env('REG_RESULTS_DIR') or '~/regression-results'))
+RESULTS_DIR       = os.path.expanduser(os.path.expandvars(required('REG_RESULTS_DIR', '~/regression-results')))
 BUILDBOT_URL      = env('REG_BUILDBOT_URL')
 BUILDBOT_USER     = env('REG_BUILDBOT_USER')
-BUILDBOT_PASS     = env('REG_BUILDBOT_PASSWORD')
+BUILDBOT_PASS     = env('REG_BUILDBOT_PASSWORD') or env('BUILDBOT_UI_PASSWORD')   # the same account as the master's regression-ui login
 FORCE_SCHEDULER   = env('REG_BUILDBOT_FORCE_SCHEDULER', 'force-regression')
 CATALOG_SCHEDULER = env('REG_BUILDBOT_CATALOG_SCHEDULER', 'force-catalog')
-BRANCHES          = tuple(b.strip() for b in env('REG_BRANCHES', 'main,2026').split(',') if b.strip())
+BRANCHES          = tuple(b.strip() for b in required('REG_BRANCHES', 'main,2026').split(',') if b.strip())
 SIGNUP_DOMAINS    = tuple(d.strip().lower() for d in env('REG_SIGNUP_DOMAINS').split(',') if d.strip())
 AUTO_NAME         = 'Auto'

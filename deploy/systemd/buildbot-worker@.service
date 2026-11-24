@@ -10,11 +10,11 @@ After=buildbot-master.service
 Wants=buildbot-master.service
 
 [Service]
-User=barath-kumar
-WorkingDirectory=/home/barath-kumar/.buildbotci/%i
-Environment=HOME=/home/barath-kumar
-Environment=PATH=/home/barath-kumar/.buildbotci/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/barath-kumar/.buildbotci/bin/buildbot-worker start --nodaemon /home/barath-kumar/.buildbotci/%i
+User=sushant
+WorkingDirectory=/home/sushant/.buildbotci/%i
+Environment=HOME=/home/sushant
+Environment=PATH=/home/sushant/.buildbotci/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/sushant/.buildbotci/bin/buildbot-worker start --nodaemon /home/sushant/.buildbotci/%i
 Restart=on-failure
 RestartSec=15
 MemoryHigh=3G

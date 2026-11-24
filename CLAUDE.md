@@ -41,7 +41,7 @@ Each module of a run goes to its own worker. A run with 5 modules and 3 workers 
 
 ## How the CI reads `indianlaw`
 
-The CI only watches the branches in `REG_BRANCHES` (default `main` and `2026`), and only through `origin`:
+The CI only watches the branches in `REG_BRANCHES`, and only through `origin`:
 
 - Every run starts with `git fetch origin` in the `indianlaw` folder next to this one, and takes the latest commit of `origin/<branch>`.
 - It **never** switches branches, resets files, or writes into your working copy. Each run, and each worker, gets its own throwaway checkout made with `git worktree` from that repository. They share its objects, so nothing is cloned again. A run's checkout is removed when the run ends, and so is a module build's checkout (the last step of each build, `release checkout`, always runs, also after a stop or an abort). Checkouts that a crash or a kill left behind are removed too: every run starts with the step `remove old checkouts` (`runner.py sweep`), which asks Buildbot which builds are running and removes every other checkout under the worker folders (`REG_WORKERS_DIR`), whether git still lists it or not. If Buildbot is not running to do this, use `bin/clean-worktrees` (add `--dry-run` to only list them; `--all` when Buildbot is stopped). `bin/clear-queue --yes` runs the same cleanup at its end. Checkouts of the repository that are not under a worker's `regression` or `regression-shard` folder, for example your own, are never touched.
@@ -124,21 +124,21 @@ The impact map (`hub/selection.py`, `hub/impact_map.json`) is not used by Buildb
 |---|---|
 | `BUILDBOT_DB_URL`, `BUILDBOT_WORKER_PASSWORD`, `BUILDBOT_ADMIN_PASSWORD` | required |
 | `BUILDBOT_UI_PASSWORD` | password for the `regression-ui` account the web UI uses; it may only force and stop builds |
-| `REG_CI_DIR` | where this repository is on the workers, default `~/buildbotci` |
-| `REG_WORKERS_DIR` | folder that holds the worker folders on the worker machine (`~/.buildbotci/w1`, ...), default `~/.buildbotci`; the cleanup of old checkouts looks only there |
+| `REG_CI_DIR` | where this repository is on the workers, **required** |
+| `REG_WORKERS_DIR` | folder that holds the worker folders on the worker machine (`~/.buildbotci/w1`, ...), **required**; the cleanup of old checkouts looks only there |
 | `REG_REPO_DIR` | where `indianlaw` is on the workers, default the folder `indianlaw` next to `REG_CI_DIR` |
-| `REG_BRANCHES` | comma separated branches of `indianlaw` to watch and offer in the web UI, default `main,2026`. Set it for both the master and the web UI |
-| `REG_CRON_MINUTE`, `REG_CRON_HOUR` | when the scheduled check runs, in cron syntax, defaults `0` and `*` (every hour on the hour). Nightly at 21:00: minute `0`, hour `21`. Every 30 minutes: minute `0,30`. The time zone is the master's `TZ`. A check with no new commit does nothing |
-| `REG_WORKERS` | comma separated worker names, default `staging`; every worker needs the same `BUILDBOT_WORKER_PASSWORD` |
+| `REG_BRANCHES` | comma separated branches of `indianlaw` to watch and offer in the web UI, **required**. Set it for both the master and the web UI |
+| `REG_CRON_MINUTE`, `REG_CRON_HOUR` | when the scheduled check runs, in cron syntax, defaults `0` and `21` (nightly at 21:00). Every hour: hour `*`. Every 30 minutes: minute `0,30`. The time zone is the master's `TZ`. A check with no new commit does nothing |
+| `REG_WORKERS` | comma separated worker names, **required**; every worker needs the same `BUILDBOT_WORKER_PASSWORD` |
 | `REG_MAX_RUNS` | most runs in progress at once, default 8 |
 | `REG_MAX_SHARDS` | most modules running as separate builds in one run, default 32; with more modules they are grouped |
-| `REG_RESULTS_DIR` | where run directories go, default `~/regression-results` |
+| `REG_RESULTS_DIR` | where run directories go, **required** |
 | `REG_UI_URL` | public URL of the web UI; the build log prints a link to its run page |
-| `REG_PYTHON` | interpreter on the worker that runs the tests, default `python3` |
-| `REGRESSION_PROFILE` | profile, default `local` |
+| `REG_PYTHON` | interpreter on the worker that runs the tests, **required** |
+| `REGRESSION_PROFILE` | profile, **required** |
 | `REG_PROFILE_FILE` | optional path, **on each worker**, of a private file with only the settings that differ on that machine, for example `DATADIR=/home/you/indianlaw_data`. Each module build merges it into `.env.<REGRESSION_PROFILE>` in its checkout: the settings you list replace the committed ones, and every other setting is kept (the build log names the settings it changed, never their values). Needed because the code loads `.env.<profile>` from the checkout with override, so a `DATADIR` environment variable has no effect |
 | `BUILDBOT_ADMIN_USER`, `BUILDBOT_UI_USER` | login names, default `admin` and `regression-ui`; the admin can also force and stop builds |
-| `BUILDBOT_URL`, `BUILDBOT_WWW_PORT`, `BUILDBOT_WORKER_PORT` | default `http://localhost:8010/`, 8010, 9989 |
+| `BUILDBOT_URL`, `BUILDBOT_WWW_PORT`, `BUILDBOT_WORKER_PORT` | `BUILDBOT_URL` is **required**; ports default to 8010 and 9989 |
 | `REG_STEP_TIMEOUT`, `REG_STEP_MAX_TIME` | seconds without output (7200) and total (21600) |
 
 Nothing outside has to reach the master, so it works on a private network.
@@ -158,12 +158,20 @@ Nothing outside has to reach the master, so it works on a private network.
 | `REG_UI_BEHIND_PROXY` | `1` when a reverse proxy (nginx) in front sets `X-Forwarded-Proto` |
 | `REG_UI_SSL_REDIRECT`, `REG_UI_HSTS_SECONDS` | `1` and a number of seconds, to redirect plain HTTP to HTTPS and tell browsers to insist on HTTPS. Optional; the proxy can do the redirect |
 | `REG_BRANCHES` | must match the master's |
-| `REG_BUILDBOT_URL`, `REG_BUILDBOT_USER`, `REG_BUILDBOT_PASSWORD` | where Buildbot is, and the `regression-ui` login (`BUILDBOT_UI_PASSWORD` of the master) the UI uses to start runs |
+| `REG_BUILDBOT_URL`, `REG_BUILDBOT_USER`, `REG_BUILDBOT_PASSWORD` | where Buildbot is (`REG_BUILDBOT_URL` is also required by the master and the runner), and the `regression-ui` login the UI uses to start runs. `REG_BUILDBOT_PASSWORD` is optional: without it the UI uses the master's `BUILDBOT_UI_PASSWORD` |
 | `REG_BUILDBOT_FORCE_SCHEDULER`, `REG_BUILDBOT_CATALOG_SCHEDULER` | default `force-regression` and `force-catalog` |
 
 Serve it over HTTPS (a reverse proxy such as nginx in front of gunicorn) and set `REG_UI_SECURE_COOKIES=1` and `REG_UI_BEHIND_PROXY=1`. Without HTTPS, passwords and cookies cross the network in clear text. `python manage.py check --deploy` lists what Django still advises for your settings. Static files (the style sheet, the admin look) are served by WhiteNoise from the same process, so no extra web server is needed for them.
 
 The UI and the worker must see the same `REG_RESULTS_DIR` (same host, or a shared mount). The first time, open the start page and press **Refresh from GitLab** for each branch so the picker has a test list.
+
+## Web UI run modes and the `bin/` settings
+
+- `python manage.py runserver` (development): loads `~/bb-master.env` by itself as plain data (never run as commands; anything already set in the terminal wins), reloads on code, template and style sheet changes, shows detailed error pages, default port 8020. It refuses detailed error pages on an address other than this machine's own. `REG_UI_DEBUG=0` turns them off. It does not notice a changed settings file.
+- `manage.py migrate`, `createsuperuser` and `ci_users ...` find the settings the same way. `REG_ENV_FILE` points them at another file.
+- `bin/run-ui` (real use): loads the settings file, runs `migrate` and `collectstatic`, starts gunicorn. It reads `REG_UI_VENV` (default `$HOME/.buildbotci`), `REG_ENV_FILE` (default `$HOME/bb-master.env`), `REG_UI_BIND` (default `127.0.0.1:8020`), `REG_UI_WORKERS` (default 2) and `REG_UI_PID_FILE` (default `$REG_UI_VENV/ui.pid`).
+- `bin/apply-update`, `bin/prune-runs`, `bin/clean-worktrees` and `bin/clear-queue` use `REG_UI_VENV` and `REG_ENV_FILE` the same way.
+- `python manage.py check --deploy` lists what Django still advises for the settings. Static files are served by WhiteNoise from the same process.
 
 ## After you change something
 
@@ -194,7 +202,7 @@ Developers need an account to start a run or refresh a test list. Reading runs, 
 
 The run list records the signed-in name, and scheduled runs are recorded as `Auto`, a name nobody can register.
 
-**Administrator tools.** In the same environment as the UI (the settings loaded as above):
+**Administrator tools.** In the same environment as the UI (`manage.py` reads `~/bb-master.env` by itself):
 
 ```bash
 cd ~/buildbotci

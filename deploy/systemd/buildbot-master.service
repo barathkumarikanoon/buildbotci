@@ -1,18 +1,18 @@
 # Buildbot master. Install as /etc/systemd/system/buildbot-master.service, then:
 #   systemctl daemon-reload && systemctl enable --now buildbot-master
-# Replace "barath-kumar" and the paths with the account and folders you use. systemd does not expand $HOME or %h here (%h is /root for system units).
+# Replace "sushant" and the paths with the account and folders you use. systemd does not expand $HOME or %h here (%h is /root for system units).
 [Unit]
 Description=Regression CI: Buildbot master
 After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
-User=barath-kumar
-WorkingDirectory=/home/barath-kumar
-EnvironmentFile=/home/barath-kumar/bb-master.env
+User=sushant
+WorkingDirectory=/home/sushant
+EnvironmentFile=/home/sushant/bb-master.env
 # --nodaemon keeps the master in the foreground so that systemd supervises it.
-ExecStart=/home/barath-kumar/.buildbotci/bin/buildbot start --nodaemon /home/barath-kumar/.buildbotci/master
-ExecReload=/home/barath-kumar/.buildbotci/bin/buildbot reconfig /home/barath-kumar/.buildbotci/master
+ExecStart=/home/sushant/.buildbotci/bin/buildbot start --nodaemon /home/sushant/.buildbotci/master
+ExecReload=/home/sushant/.buildbotci/bin/buildbot reconfig /home/sushant/.buildbotci/master
 Restart=on-failure
 RestartSec=10
 # Work that a crash cut off is retried by the master; keep it from taking the machine down.

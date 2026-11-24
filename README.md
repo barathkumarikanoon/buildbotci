@@ -34,7 +34,7 @@ How it works inside (run flow, contract with `indianlaw`, all settings, accounts
 
 ## Local setup
 
-For one machine: one master, one worker, and the web UI run by hand.
+For one machine: one master, three workers, and the web UI, all started by hand.
 
 **Needs:** Python 3, git, PostgreSQL, the `indianlaw` clone above, and the project's own Python environment for the tests (for example `~/.indianlaw/bin/python`).
 
@@ -42,12 +42,12 @@ For one machine: one master, one worker, and the web UI run by hand.
 
 ```bash
 python3 -m venv ~/.buildbotci && . ~/.buildbotci/bin/activate
-pip install buildbot buildbot-www buildbot-worker -r ~/buildbotci/requirements.txt
+pip install -r ~/buildbotci/requirements.txt
 ```
 
 **2. Settings file `~/bb-master.env`**
 
-One `KEY='value'` per line. No `export`, and no comment after a value. Write paths as `'$HOME/...'`.
+One `KEY='value'` per line, and no comment after a value. Write paths as `'$HOME/...'`. Leave out `export`: it works for local runs, but systemd (server setup) ignores lines that start with it.
 
 ```bash
 BUILDBOT_DB_URL='postgresql+psycopg2://buildbot:CHANGE-ME@localhost/buildbot'
@@ -60,6 +60,7 @@ REG_WORKERS='w1,w2,w3'
 REG_CI_DIR='$HOME/buildbotci'
 REG_PYTHON='$HOME/.indianlaw/bin/python'
 REG_RESULTS_DIR='$HOME/regression-results'
+REG_WORKERS_DIR='$HOME/.buildbotci'
 REGRESSION_PROFILE='local'
 REG_PROFILE_FILE='$HOME/.buildbotci/private/profile.env'
 REG_BRANCHES='main,2026'
@@ -74,10 +75,9 @@ REG_UI_DB_SCHEMA='ci'
 REG_UI_URL='http://127.0.0.1:8020'
 REG_BUILDBOT_URL='http://localhost:8010/'
 REG_BUILDBOT_USER='regression-ui'
-REG_BUILDBOT_PASSWORD='CHANGE-ME-same-as-BUILDBOT_UI_PASSWORD'
 ```
 
-Fill every `CHANGE-ME`; the other settings are listed in `CLAUDE.md`. Make a secret with `python3 -c "import secrets; print(secrets.token_hex(32))"`. Do not set `REG_UI_SECURE_COOKIES` or `REG_UI_BEHIND_PROXY` locally: the UI runs over plain HTTP. If your worker folder is not `~/.buildbotci/w1`, also set `REG_WORKERS_DIR` to the folder that holds it.
+Fill every `CHANGE-ME`. The paths, `REG_WORKERS`, `REG_BRANCHES`, `REGRESSION_PROFILE`, `BUILDBOT_URL` and `REG_BUILDBOT_URL` have no default: the master, the runner and the web UI stop with an error that names the missing one. The other settings are listed in `CLAUDE.md`. Make a secret with `python3 -c "import secrets; print(secrets.token_hex(32))"`. Do not set `REG_UI_SECURE_COOKIES` or `REG_UI_BEHIND_PROXY` locally: the UI runs over plain HTTP. `REG_WORKERS_DIR` is the folder that holds the worker folders (`~/.buildbotci/w1`, ...).
 
 **3. Master**
 
@@ -91,14 +91,17 @@ buildbot checkconfig ~/.buildbotci/master && buildbot start ~/.buildbotci/master
 
 Buildbot's own page is at http://localhost:8010.
 
-**4. Worker** (a second terminal)
+**4. Workers** (three, `w1` to `w3`, matching `REG_WORKERS`; a second terminal)
 
 ```bash
-buildbot-worker create-worker ~/.buildbotci/w1 localhost:9989 w1 "$BUILDBOT_WORKER_PASSWORD"
-buildbot-worker start ~/.buildbotci/w1
+set -a; . ~/bb-master.env; set +a
+for i in 1 2 3; do
+  buildbot-worker create-worker ~/.buildbotci/w$i localhost:9989 w$i "$BUILDBOT_WORKER_PASSWORD"
+done
+for i in 1 2 3; do buildbot-worker start ~/.buildbotci/w$i; done
 ```
 
-The worker needs `git`, `REG_PYTHON`, the data directory (`DATADIR` in the checkout's `.env.local`, which must exist) and write access to `REG_RESULTS_DIR`. If `DATADIR` is different on this machine, put it in a private file and point `REG_PROFILE_FILE` at it.
+The worker needs `git`, `REG_PYTHON`, the data directory (`DATADIR` in the checkout's `.env.local`, which must exist) and write access to `REG_RESULTS_DIR`. By default the worker uses the `DATADIR` that `.env.local` already sets. Only if it must differ on this machine, put it in a private file and set `REG_PROFILE_FILE` to that file (leave `REG_PROFILE_FILE` out otherwise: the profile step is then skipped).
 
 **5. Web UI**
 
@@ -117,7 +120,7 @@ Sign in, open the start page and press **Refresh from GitLab** once per branch s
 
 ```bash
 buildbot stop ~/.buildbotci/master
-buildbot-worker stop ~/.buildbotci/w1
+for i in 1 2 3; do buildbot-worker stop ~/.buildbotci/w$i; done
 ```
 
 After you change something:
@@ -159,7 +162,7 @@ cp ~/buildbotci/deploy/bb-master.env.example ~/bb-master.env && chmod 600 ~/bb-m
 
 Fill in every `CHANGE-ME` and `<...>` value. List all workers in `REG_WORKERS`. Set `REG_UI_URL` to the real `https://` address.
 
-**3. Edit the systemd units.** They are set to the account `barath-kumar` and `/home/barath-kumar/...`. For another account, replace those in all three files. systemd does not expand `$HOME`, and `%h` means `/root` in system units, so use absolute paths.
+**3. Edit the systemd units.** They are set to the account `sushant` and `/home/sushant/...`. For another account, replace those in all three files. systemd does not expand `$HOME`, and `%h` means `/root` in system units, so use absolute paths.
 
 **4. Install and start.**
 
