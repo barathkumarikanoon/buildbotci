@@ -48,7 +48,7 @@ def read_json(path, default = None):
 
 class Store:
     def __init__(self, root):
-        self.root      = os.path.abspath(root)
+        self.root      = os.path.abspath(os.path.expanduser(os.path.expandvars(root)))
         self.runs_dir  = os.path.join(self.root, 'runs')
         self.state_dir = os.path.join(self.root, 'state')
         os.makedirs(self.runs_dir, exist_ok = True)
@@ -69,6 +69,17 @@ class Store:
         if not valid_id(test_id):
             raise ValueError('bad test id')
         return os.path.join(self.run_path(run_id), 'tests', test_id)
+
+    def stop_path(self, run_id):
+        return os.path.join(self.run_path(run_id), 'stop.json')
+
+    def get_stop(self, run_id):
+        return read_json(self.stop_path(run_id))
+
+    def save_stop(self, run_id, who):
+        data = {'by': who, 'at': now()}
+        write_json(self.stop_path(run_id), data)
+        return data
 
     def shard_path(self, run_id, index):
         return os.path.join(self.run_path(run_id), 'shards', '%d.json' % int(index))
@@ -112,18 +123,26 @@ class Store:
     def get_result(self, run_id, test_id):
         return read_json(os.path.join(self.test_path(run_id, test_id), 'result.json'))
 
-    def list_runs(self, limit = 50, offset = 0, branch = None, result = None, state = None, requested_by = None):
+    def list_runs(self, limit = 50, offset = 0, branch = None, result = None, state = None, requested_by = None,
+                  recent = None):
+        """One page of runs, newest first, and the total number of runs that match.
+        Without a filter only the runs of the page are read. With a filter every run is read, unless `recent` limits
+        the search to that many of the newest runs (enough for questions like 'what is running now')."""
         try:
-            names = sorted(os.listdir(self.runs_dir), reverse = True)
+            names = sorted((n for n in os.listdir(self.runs_dir)
+                            if valid_id(n) and os.path.exists(os.path.join(self.runs_dir, n, 'run.json'))), reverse = True)
         except OSError:
             return [], 0
 
-        filtered = bool(branch or result or state or requested_by)
+        if not (branch or result or state or requested_by):
+            runs = [run for run in (self._load(name) for name in names[offset:offset + limit]) if run]
+            return runs, len(names)
+
+        if recent:
+            names = names[:recent]
         runs  = []
         total = 0
         for name in names:
-            if not valid_id(name):
-                continue
             run = self._load(name)
             if not run:
                 continue
@@ -138,9 +157,44 @@ class Store:
             total += 1
             if offset <= total - 1 < offset + limit:
                 runs.append(run)
-            if not filtered and total >= offset + limit:
-                break
         return runs, total
+
+    def prune(self, older_than_days, keep_latest = 50, dry_run = True):
+        """Delete the folders of old, ended runs. Never touched: the newest `keep_latest` runs, runs that are queued or
+        running, and the run that is the last scheduled test of a branch. Returns (names, bytes) of what was (or would be) removed."""
+        import calendar
+        import shutil
+        protected = {info.get('run') for info in self.all_last_tested().values() if info.get('run')}
+        names  = sorted((n for n in os.listdir(self.runs_dir) if valid_id(n)), reverse = True) if os.path.isdir(self.runs_dir) else []
+        limit  = time.time() - older_than_days * 86400
+        victims, size = [], 0
+        for position, name in enumerate(names):
+            if position < keep_latest or name in protected:
+                continue
+            run = self._load(name) or {}
+            if run.get('state') in RUNNING_STATES:
+                continue
+            path = os.path.join(self.runs_dir, name)
+            stamp = run.get('finished') or run.get('created')
+            try:
+                moment = calendar.timegm(time.strptime(stamp[:19], '%Y-%m-%dT%H:%M:%S')) if stamp else os.path.getmtime(path)
+                if stamp and len(stamp) >= 24:
+                    sign = 1 if stamp[19] == '+' else -1
+                    moment -= sign * (int(stamp[20:22]) * 3600 + int(stamp[22:24]) * 60)
+            except (ValueError, TypeError, IndexError, OSError):
+                moment = os.path.getmtime(path)
+            if moment > limit:
+                continue
+            for folder, _, files in os.walk(path):
+                for f in files:
+                    try:
+                        size += os.path.getsize(os.path.join(folder, f))
+                    except OSError:
+                        pass
+            victims.append(name)
+            if not dry_run:
+                shutil.rmtree(path, ignore_errors = True)
+        return victims, size
 
     def history(self, test_id, limit = 20, before = None):
         entries = []

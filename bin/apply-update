@@ -5,11 +5,10 @@ venv="${REG_UI_VENV:-$HOME/.buildbotci}"
 env_file="${REG_ENV_FILE:-$HOME/bb-master.env}"
 pid_file="${REG_UI_PID_FILE:-$venv/ui.pid}"
 cd "$here"
-set -a
-. "$env_file"
-set +a
+set -a; . "$env_file"; set +a
 "$venv/bin/pip" install --quiet -r requirements.txt
 "$venv/bin/python" manage.py migrate --noinput
+"$venv/bin/python" manage.py collectstatic --noinput --verbosity 0
 if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
     kill -HUP "$(cat "$pid_file")"
     echo "web UI reloaded with the new code"

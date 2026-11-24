@@ -1,0 +1,20 @@
+# Web UI (gunicorn). Install as /etc/systemd/system/regression-ui.service, then:
+#   systemctl daemon-reload && systemctl enable --now regression-ui
+# bin/run-ui applies the database migrations and collects the static files before it starts gunicorn.
+[Unit]
+Description=Regression CI: web UI
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=barath-kumar
+WorkingDirectory=/home/barath-kumar/buildbotci
+Environment=REG_UI_VENV=/home/barath-kumar/.buildbotci
+ExecStart=/home/barath-kumar/buildbotci/bin/run-ui
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

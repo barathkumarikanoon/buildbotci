@@ -1,7 +1,6 @@
 from datetime import datetime
 from urllib.parse import urlencode
 
-from django.utils.html import conditional_escape, format_html, mark_safe
 
 STATUS_LABEL = {'error': 'error', 'failed': 'failed', 'no_expected': 'no baseline',
                 'aborted': 'aborted', 'running': 'running', 'pending': 'pending',
@@ -60,13 +59,6 @@ def size(value):
 
 def label(status):
     return STATUS_LABEL.get(status, status)
-
-
-def marked(segments):
-    parts = []
-    for text, changed in segments:
-        parts.append(format_html('<mark>{}</mark>', text) if changed else conditional_escape(text))
-    return mark_safe(''.join(parts))
 
 
 def run_duration(run):

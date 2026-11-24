@@ -69,7 +69,6 @@ TEMPLATES = [{
         'django.contrib.auth.context_processors.auth',
         'django.contrib.messages.context_processors.messages',
         'ciweb.accounts.context.pending',
-        'ciweb.runs.context.links',
     ]},
 }]
 
@@ -77,6 +76,9 @@ DB_URL = env('REG_UI_DB_URL') or env('BUILDBOT_DB_URL') or ('sqlite://' if TESTI
 _default_db = database_from_url(DB_URL, env('REG_UI_DB_SCHEMA'))
 if _default_db is None:
     raise ImproperlyConfigured('Set REG_UI_DB_URL (or BUILDBOT_DB_URL) to the database that holds the accounts')
+if not TESTING:
+    _default_db.setdefault('CONN_MAX_AGE', 60)
+    _default_db.setdefault('CONN_HEALTH_CHECKS', True)
 DATABASES = {'default': _default_db}
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -121,7 +123,23 @@ USE_I18N  = False
 
 STATIC_URL  = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-WHITENOISE_USE_FINDERS = True
+# Serve the collected files (python manage.py collectstatic, done by bin/run-ui). While developing, or when that folder
+# does not exist, read the files from the apps instead so that the pages never lose their style sheet.
+WHITENOISE_USE_FINDERS = DEBUG or not STATIC_ROOT.exists()
+
+LOG_LEVEL = env('REG_UI_LOG_LEVEL', 'INFO').upper()
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'}},
+    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},
+    'loggers': {
+        'django': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'django.request': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'django.security': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+        'ciweb': {'handlers': ['console'], 'level': LOG_LEVEL, 'propagate': False},
+    },
+}
 
 CSRF_FAILURE_VIEW = 'ciweb.runs.views.csrf_failed'
 
@@ -139,9 +157,8 @@ DEFAULT_FROM_EMAIL  = env('REG_SMTP_FROM')
 MAIL_CONFIGURED     = bool(EMAIL_HOST and DEFAULT_FROM_EMAIL and PUBLIC_URL)
 EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend' if MAIL_CONFIGURED else 'django.core.mail.backends.dummy.EmailBackend'
 
-RESULTS_DIR       = env('REG_RESULTS_DIR') or os.path.expanduser('~/regression-results')
+RESULTS_DIR       = os.path.expanduser(os.path.expandvars(env('REG_RESULTS_DIR') or '~/regression-results'))
 BUILDBOT_URL      = env('REG_BUILDBOT_URL')
-BUILDBOT_PUBLIC_URL = env('REG_BUILDBOT_PUBLIC_URL') or BUILDBOT_URL
 BUILDBOT_USER     = env('REG_BUILDBOT_USER')
 BUILDBOT_PASS     = env('REG_BUILDBOT_PASSWORD')
 FORCE_SCHEDULER   = env('REG_BUILDBOT_FORCE_SCHEDULER', 'force-regression')

@@ -12,7 +12,12 @@
       on <strong>{{ run.branch }}</strong>{% if run.reason %} · “{{ run.reason }}”{% endif %}
     </p>
   </div>
-  {% if run.build.url %}<div class="acts"><a class="btn" href="{{ run.build.url }}">Open in Buildbot ↗</a></div>{% endif %}
+  {% if live and user.is_authenticated and not stop %}
+  <form class="acts" method="post" action="{{ stop_url }}" onsubmit="return confirm('Stop this run? Running tests are interrupted and the rest are marked aborted.');">
+    {% csrf_token %}
+    <button type="submit" class="btn danger" id="stop-run">Stop run</button>
+  </form>
+  {% endif %}
 </section>
 
 <div class="card wide">
@@ -22,7 +27,6 @@
     <div><dt>Trigger</dt><dd>{{ run.trigger }}{% if run.requested_by %} · {{ run.requested_by }}{% endif %}</dd></div>
     <div><dt>Started</dt><dd>{{ started_text }}</dd></div>
     <div><dt>Duration</dt><dd id="run-duration">{{ duration }}</dd></div>
-    {% if run.build.url %}<div><dt>Buildbot</dt><dd><a href="{{ run.build.url }}">build {{ run.build.number }}</a></dd></div>{% endif %}
   </dl>
 </div>
 

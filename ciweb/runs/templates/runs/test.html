@@ -25,7 +25,7 @@
 
 <div class="tabs" role="tablist">
   <a href="#analysis" data-tab="analysis" class="tab active">Analysis</a>
-  {% if files.diff %}<a href="#diff" data-tab="diff" class="tab">Diff <span class="pill">{{ total_hunks }}</span></a>{% endif %}
+  {% if files.diff %}<a href="#diff" data-tab="diff" class="tab">Diff <span class="pill">{{ group_total }}</span></a>{% endif %}
   {% if files.expected %}<a href="#expected" data-tab="expected" class="tab" data-src="{{ raw.expected }}">Expected</a>{% endif %}
   {% if files.actual %}<a href="#actual" data-tab="actual" class="tab" data-src="{{ raw.actual }}">Actual</a>{% endif %}
   <a href="#log" data-tab="log" class="tab" data-src="{{ raw.log }}" data-live-tail="{{ tail_url }}" data-live="{% if running %}1{% else %}0{% endif %}">Log</a>
@@ -59,29 +59,30 @@
 
       {% if item.status == 'failed' and result.diff %}
         <div class="stats">
-          <div class="stat"><div class="v">{{ result.diff.hunks }}</div><div class="k">differing {{ hunks_word }}</div></div>
+          <div class="stat"><div class="v">{{ result.diff.hunks }}</div><div class="k">differing {{ hunks_word }}{% if group_total != result.diff.hunks %} in {{ group_total }} documents{% endif %}</div></div>
           <div class="stat add"><div class="v">+{{ result.diff.added }}</div><div class="k">lines only in actual output</div></div>
           <div class="stat del"><div class="v">−{{ result.diff.removed }}</div><div class="k">expected lines missing</div></div>
           <div class="stat"><div class="v">{{ result.diff.first_line }}</div><div class="k">first difference, expected line</div></div>
         </div>
         {% if summary_rows %}
         <details class="regions"{% if summary_count <= 30 %} open{% endif %}>
-        <summary>Differing regions <span class="muted small">· the first {{ summary_count }}, click to {% if summary_count <= 30 %}fold{% else %}unfold{% endif %}</span></summary>
+        <summary>Differences by document <span class="muted small">· the first {{ summary_count }}, click to {% if summary_count <= 30 %}fold{% else %}unfold{% endif %}</span></summary>
         <table class="grid">
-          <thead><tr><th>#</th><th>Expected line</th><th>Near</th><th>Change</th></tr></thead>
+          <thead><tr><th>#</th><th>Expected line</th><th>Near</th><th>Regions</th><th>Change</th></tr></thead>
           <tbody>
           {% for h in summary_rows %}
             <tr>
               <td><a href="{{ h.url }}">{{ h.number }}</a></td>
               <td class="mono">{{ h.line }}</td>
               <td class="small">{{ h.label|default:'' }}</td>
+              <td>{{ h.count }}</td>
               <td><span class="add">+{{ h.added }}</span> <span class="del">-{{ h.removed }}</span></td>
             </tr>
           {% endfor %}
           </tbody>
         </table>
         </details>
-        {% if more_hunks %}<p class="muted small foot">Showing the first {{ summary_count }} regions; the Diff tab has all of them.</p>{% endif %}
+        {% if more_hunks %}<p class="muted small foot">Showing the first {{ summary_count }} documents; the Diff tab has all of them.</p>{% endif %}
         {% endif %}
       {% endif %}
 
@@ -150,12 +151,15 @@ python runner.py --repo-dir &lt;your indianlaw checkout&gt; run --tests {{ item.
     <div class="hunk-head">
       <strong>#{{ h.number }}</strong>
       <span>expected line {{ h.line }}</span>
+      {% if h.count > 1 %}<span class="muted">{{ h.count }} regions</span>{% endif %}
       <span class="add">+{{ h.added }}</span> <span class="del">-{{ h.removed }}</span>
       {% if h.label %}<span class="muted">near {{ h.label }}</span>{% endif %}
     </div>
+    {% for part in h.parts %}
+    {% if h.count > 1 %}<div class="part-head muted small">expected line {{ part.line }} · <span class="add">+{{ part.added }}</span> <span class="del">-{{ part.removed }}</span></div>{% endif %}
     {% if split %}
     <table class="diff split">
-      {% for row in h.split %}
+      {% for row in part.split %}
       <tr>
         <td class="ln">{{ row.lno|default_if_none:'' }}</td>
         <td class="code {{ row.lcls }}">{{ row.ltext }}</td>
@@ -166,11 +170,12 @@ python runner.py --repo-dir &lt;your indianlaw checkout&gt; run --tests {{ item.
     </table>
     {% else %}
     <table class="diff unified">
-      {% for row in h.unified %}
+      {% for row in part.unified %}
       <tr class="{{ row.tag }}"><td class="ln">{{ row.old|default_if_none:'' }}</td><td class="ln">{{ row.new|default_if_none:'' }}</td><td class="sign">{{ row.sign }}</td><td class="code">{{ row.text }}</td></tr>
       {% endfor %}
     </table>
     {% endif %}
+    {% endfor %}
   </div>
   {% endfor %}
   <div class="pager">

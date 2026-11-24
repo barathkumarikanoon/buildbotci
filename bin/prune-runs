@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Delete the folders of old test runs (results, diffs, saved outputs) to free disk space.
+#
+#   bin/prune-runs --days 30             list the runs that ended more than 30 days ago (deletes nothing)
+#   bin/prune-runs --days 30 --yes       delete them
+#   bin/prune-runs --days 30 --keep 100  also keep the newest 100 runs whatever their age
+#
+# Never removed: queued or running runs, the newest --keep runs (default 50), and the last scheduled run of each branch.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${REG_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${REG_ENV_FILE:-$HOME/bb-master.env}"; set +a
+cd "$here"
+exec "$venv/bin/python" runner.py prune "$@"

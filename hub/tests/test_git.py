@@ -167,6 +167,105 @@ class GitFlowTest(unittest.TestCase):
         self.call('cmd_checkout', dest = dest, revision = newest)
         self.assertEqual(git(dest, 'rev-parse', 'HEAD'), newest)
 
+    def make_trees(self, *names):
+        base = os.path.join(self.tmp.name, 'workers')
+        revision = git(self.source, 'rev-parse', 'HEAD')
+        paths = {}
+        for name in names:
+            paths[name] = os.path.join(base, name, 'indianlaw')
+            self.call('cmd_checkout', dest = paths[name], revision = revision)
+        return base, paths
+
+    def test_a_sweep_removes_the_checkouts_nobody_is_running_and_keeps_the_others(self):
+        base, tree = self.make_trees('w1/regression/run-3', 'w1/regression/run-4',
+                                     'w1/regression-shard', 'w2/regression-shard')
+        os.makedirs(os.path.join(base, 'w1', 'regression', 'run-5'))
+        other = os.path.join(self.tmp.name, 'mine', 'indianlaw')
+        self.call('cmd_checkout', dest = other, revision = git(self.source, 'rev-parse', 'HEAD'))
+        busy = {('w1', 'regression', 4), ('w2', 'regression-shard', None)}
+        removed = runner.sweep_trees(base, busy)
+        self.assertEqual(sorted(os.path.relpath(r, base) for r in removed),
+                         ['w1/regression-shard/indianlaw', 'w1/regression/run-3/indianlaw', 'w1/regression/run-5/indianlaw'])
+        self.assertFalse(os.path.exists(os.path.join(base, 'w1', 'regression', 'run-5')))
+        for gone in ('w1/regression/run-3', 'w1/regression-shard'):
+            self.assertFalse(os.path.exists(tree[gone]))
+        self.assertFalse(os.path.exists(os.path.join(base, 'w1', 'regression', 'run-3')))
+        self.assertTrue(os.path.exists(tree['w1/regression/run-4']))
+        self.assertTrue(os.path.exists(tree['w2/regression-shard']))
+        self.assertTrue(os.path.exists(other))
+        listing = git(self.source, 'worktree', 'list')
+        self.assertIn(tree['w1/regression/run-4'], listing)
+        self.assertNotIn(tree['w1/regression/run-3'], listing)
+        self.assertTrue(os.path.exists(os.path.join(self.source, 'WORK_IN_PROGRESS')))
+
+    def test_a_dry_run_lists_but_removes_nothing(self):
+        base, tree = self.make_trees('w1/regression/run-3')
+        code, _, out = self.call('cmd_sweep', base = base, buildbot_url = '', all = True, dry_run = True)
+        self.assertIn('would remove old checkout', out)
+        self.assertIn('1 old checkout to remove', out)
+        self.assertTrue(os.path.exists(tree['w1/regression/run-3']))
+
+    def test_a_sweep_with_nothing_running_clears_everything_of_ours(self):
+        base, tree = self.make_trees('w1/regression/run-3', 'w2/regression-shard')
+        other = os.path.join(self.tmp.name, 'mine', 'indianlaw')
+        self.call('cmd_checkout', dest = other, revision = git(self.source, 'rev-parse', 'HEAD'))
+        self.assertEqual(len(runner.sweep_trees(base, set())), 2)
+        self.assertEqual(os.listdir(os.path.join(base, 'w1')), ['regression'])
+        self.assertEqual(os.listdir(os.path.join(base, 'w1', 'regression')), [])
+        self.assertTrue(os.path.exists(other))
+        self.assertEqual(runner.sweep_trees(base, set()), [])
+
+    def test_a_checkout_whose_folder_was_deleted_by_hand_is_cleaned_from_gits_list(self):
+        base, tree = self.make_trees('w1/regression/run-3')
+        import shutil
+        shutil.rmtree(tree['w1/regression/run-3'])
+        self.assertIn(tree['w1/regression/run-3'], git(self.source, 'worktree', 'list'))
+        runner.sweep_trees(base, set())
+        self.assertNotIn(tree['w1/regression/run-3'], git(self.source, 'worktree', 'list'))
+
+    def test_a_folder_git_does_not_list_is_still_removed(self):
+        stray = os.path.join(self.tmp.name, 'stray', 'indianlaw')
+        os.makedirs(os.path.join(stray, 'sub'))
+        runner.use_repo(self.source)
+        runner.remove_worktree(stray)
+        self.assertFalse(os.path.exists(stray))
+        runner.remove_worktree(stray)
+
+    def test_the_code_checkout_itself_is_never_removed(self):
+        runner.use_repo(self.source)
+        with self.assertRaises(SystemExit):
+            runner.remove_worktree(self.source)
+        self.assertTrue(os.path.exists(os.path.join(self.source, 'WORK_IN_PROGRESS')))
+
+    def test_the_sweep_command_removes_nothing_when_buildbot_cannot_be_asked(self):
+        base, tree = self.make_trees('w1/regression/run-3')
+        from unittest import mock
+        with mock.patch.object(runner, 'buildbot_in_use', return_value = None):
+            code, _, out = self.call('cmd_sweep', base = base, buildbot_url = 'http://nowhere', all = False, dry_run = False)
+        self.assertEqual(code, 0)
+        self.assertIn('no checkout removed', out)
+        self.assertTrue(os.path.exists(tree['w1/regression/run-3']))
+
+    def test_the_sweep_command_with_all_clears_even_if_buildbot_is_down(self):
+        base, tree = self.make_trees('w1/regression/run-3', 'w1/regression-shard')
+        code, _, out = self.call('cmd_sweep', base = base, buildbot_url = 'http://nowhere', all = True, dry_run = False)
+        self.assertIn('2 old checkouts removed', out)
+        self.assertFalse(os.path.exists(tree['w1/regression-shard']))
+
+    def test_buildbot_in_use_reads_the_running_builds(self):
+        import io, json
+        from unittest import mock
+        answers = {'workers': {'workers': [{'workerid': 1, 'name': 'w1'}]},
+                   'builders': {'builders': [{'builderid': 1, 'name': 'regression'}, {'builderid': 2, 'name': 'regression-shard'}]},
+                   'builds?complete__eq=false': {'builds': [{'builderid': 1, 'workerid': 1, 'number': 7},
+                                                            {'builderid': 2, 'workerid': 1, 'number': 3}]}}
+        def fake(url, timeout = 0):
+            return io.StringIO(json.dumps(answers[url.split('/api/v2/')[1]]))
+        with mock.patch('urllib.request.urlopen', fake):
+            self.assertEqual(runner.buildbot_in_use('http://bb/'), {('w1', 'regression', 7), ('w1', 'regression-shard', None)})
+        with mock.patch('urllib.request.urlopen', side_effect = OSError):
+            self.assertIsNone(runner.buildbot_in_use('http://bb/'))
+
     def test_checkout_folder_must_be_called_indianlaw(self):
         with self.assertRaises(SystemExit):
             self.call('cmd_checkout', dest = os.path.join(self.tmp.name, 'work', 'oops'), revision = self.first)

@@ -1,0 +1,25 @@
+# One Buildbot worker per instance: buildbot-worker@w1 runs the worker in ~/.buildbotci/w1.
+#   systemctl enable --now buildbot-worker@w1 buildbot-worker@w2 buildbot-worker@w3
+# The memory limit is the important line: a module build that grows too large is stopped by systemd,
+# and the build fails, instead of the kernel stopping everything on the machine (out of memory).
+# Size it as: (total memory - 2 GB for the master, the UI and Postgres) / number of workers.
+# The workers do NOT load bb-master.env: they do not need the passwords of the master.
+[Unit]
+Description=Regression CI: Buildbot worker %i
+After=buildbot-master.service
+Wants=buildbot-master.service
+
+[Service]
+User=barath-kumar
+WorkingDirectory=/home/barath-kumar/.buildbotci/%i
+Environment=HOME=/home/barath-kumar
+Environment=PATH=/home/barath-kumar/.buildbotci/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/barath-kumar/.buildbotci/bin/buildbot-worker start --nodaemon /home/barath-kumar/.buildbotci/%i
+Restart=on-failure
+RestartSec=15
+MemoryHigh=3G
+MemoryMax=4G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

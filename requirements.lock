@@ -1,0 +1,18 @@
+# Exact versions the web UI was tested with (pip install -r requirements.lock).
+# Regenerate after upgrading: install the new versions, run the tests, then recreate this list.
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.2.0
+asgiref==3.13.0
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+Django==6.1.3
+gunicorn==27.0.1
+idna==3.20
+psycopg2-binary==2.9.13
+pycparser==3.12
+requests==2.34.2
+sqlparse==0.6.1
+tzdata==2026.6
+urllib3==2.8.0
+whitenoise==6.12.0

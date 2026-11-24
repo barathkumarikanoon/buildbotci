@@ -5,6 +5,173 @@
     "^docid:\\s*(\\d+)",
     "^(\\d+ .+ \\| .+)$"
   ],
+  "record_formats": [
+    {
+      "name": "layout documents",
+      "outputs": [
+        "analyze_paras"
+      ],
+      "start": [
+        [
+          "^={10,}$",
+          "^docid:",
+          "^RELURL:"
+        ],
+        [
+          "^docid:",
+          "^RELURL:"
+        ]
+      ],
+      "label": "^RELURL:\\s*(.+)$"
+    },
+    {
+      "name": "cited documents (text)",
+      "outputs": [
+        "cite_text.txt",
+        "cite_law.txt"
+      ],
+      "start": [
+        [
+          "^docid: \\d+ relurl: "
+        ]
+      ],
+      "label": "relurl: (.+?)\\s*$"
+    },
+    {
+      "name": "cited documents (xml)",
+      "outputs": [
+        "*_extract.xml"
+      ],
+      "start": [
+        [
+          "^<doc docid="
+        ]
+      ],
+      "label": "relurl=\"([^\"]*)\""
+    },
+    {
+      "name": "header, one case per entry",
+      "outputs": [
+        "*_hdr"
+      ],
+      "start": [
+        [
+          "^\\d+ .+ \\| .+$"
+        ]
+      ]
+    },
+    {
+      "name": "structural, one docid per block",
+      "outputs": [
+        "*_structural"
+      ],
+      "start": [
+        [
+          "^\\d+$"
+        ]
+      ]
+    },
+    {
+      "name": "judgment text by file",
+      "outputs": [
+        "*_txt",
+        "html_to_*",
+        "text_to_html",
+        "loksabha_text_tags"
+      ],
+      "start": [
+        [
+          "^FILE: "
+        ]
+      ],
+      "label": "^FILE: (.+?)\\s*$"
+    },
+    {
+      "name": "resolution csv, rows of one docid",
+      "outputs": [
+        "resolve_*"
+      ],
+      "key": "^(\\d+),"
+    },
+    {
+      "name": "causelists",
+      "outputs": [
+        "*_causelist"
+      ],
+      "start": [
+        [
+          "^CAUSELIST \\d+"
+        ]
+      ]
+    },
+    {
+      "name": "lawsik index",
+      "outputs": [
+        "index_lawsik"
+      ],
+      "start": [
+        [
+          "^-{20,}$",
+          "^relurl:"
+        ]
+      ],
+      "label": "^relurl: (.+?)\\s*$"
+    },
+    {
+      "name": "lawsik sections",
+      "outputs": [
+        "sections"
+      ],
+      "start": [
+        [
+          "^RELURL:"
+        ]
+      ],
+      "label": "^RELURL: (.+?)\\s*$"
+    },
+    {
+      "name": "punishment csv, rows of one act",
+      "outputs": [
+        "punishment.csv"
+      ],
+      "key": "^[^,]*,[^,]*,([^,]*),"
+    },
+    {
+      "name": "one record per line",
+      "outputs": [
+        "judgment_words",
+        "act_match",
+        "duplicate_judgments"
+      ],
+      "start": [
+        [
+          "^.+$"
+        ]
+      ]
+    },
+    {
+      "name": "query test blocks",
+      "outputs": [
+        "doc_fragment",
+        "doclist",
+        "execute_query",
+        "form_query",
+        "hierarchy_collapse",
+        "parse",
+        "parse_input",
+        "serialize_query",
+        "spell_check",
+        "clsearch",
+        "parse_clquery"
+      ],
+      "start": [
+        [
+          "^TEST$"
+        ]
+      ],
+      "label": "^(?!TEST$)(.+)$"
+    }
+  ],
   "ignore": [
     "*.md",
     ".gitignore",

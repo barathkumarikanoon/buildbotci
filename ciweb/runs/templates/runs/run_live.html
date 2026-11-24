@@ -1,4 +1,4 @@
-{% load ci_tags %}{% if run.message %}<div class="flash {{ message_class }}">{{ run.message }}</div>{% endif %}
+{% load ci_tags %}{% if stop %}<div class="flash info">Stop requested by {{ stop.by }}. Waiting for the workers to stop…</div>{% endif %}{% if run.message %}<div class="flash {{ message_class }}">{{ run.message }}</div>{% endif %}
 
 {% if total %}
 <div class="card wide">
@@ -20,7 +20,7 @@
   <div class="shard">
     <div class="row"><span class="muted small">Shard {{ s.index }}{% if s.worker %} · {{ s.worker }}{% endif %}</span><span class="badge {{ s.cls }}">{{ s.state|label }}</span></div>
     <div class="mods">{{ s.modules_text }}</div>
-    <div class="meta-line">{% if s.build_url %}<a href="{{ s.build_url }}">Buildbot build #{{ s.build_number }} ↗</a>{% else %}<span>waiting for a worker</span>{% endif %}</div>
+    {% if s.state == 'pending' %}<div class="meta-line"><span>waiting for a worker</span></div>{% endif %}
     {% if s.message %}<div class="note">{{ s.message }}</div>{% endif %}
   </div>
   {% endfor %}

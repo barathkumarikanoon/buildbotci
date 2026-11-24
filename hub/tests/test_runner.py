@@ -10,6 +10,14 @@ from hub.store import Store
 from hub.tests import fixtures
 
 
+class ExpandPathTest(unittest.TestCase):
+    def test_tilde_home_variable_and_absolute_paths_all_resolve(self):
+        with mock.patch.dict(os.environ, {'HOME': '/home/someone'}):
+            self.assertEqual(runner.expand_path('~/indianlaw'), '/home/someone/indianlaw')
+            self.assertEqual(runner.expand_path('$HOME/indianlaw'), '/home/someone/indianlaw')
+            self.assertEqual(runner.expand_path('/srv/ci/indianlaw'), '/srv/ci/indianlaw')
+
+
 class AssignShardsTest(unittest.TestCase):
     def test_one_module_per_shard(self):
         shards = runner.assign_shards(['a', 'b', 'c'], 32)
@@ -22,6 +30,116 @@ class AssignShardsTest(unittest.TestCase):
 
     def test_nothing_selected_gives_no_shards(self):
         self.assertEqual(runner.assign_shards([], 32), [])
+
+
+class HistogramDiffTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def write(self, name, text):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, 'w', encoding = 'utf8', newline = '') as handle:
+            handle.write(text)
+        return path
+
+    def diff(self, old, new):
+        return runner.histogram_diff(self.write('expected', old), self.write('actual', new),
+                                     ('expected/x', 'actual/x'), self.tmp.name)
+
+    def test_header_uses_the_labels_and_the_hunks_parse(self):
+        from hub import diffparse
+        text = self.diff('a\nb\nc\nd\n', 'a\nb\nCHANGED\nd\n')
+        self.assertTrue(text.startswith('--- expected/x\n+++ actual/x\n@@ '))
+        hunks = diffparse.parse_unified(text)
+        self.assertEqual((len(hunks), hunks[0]['added'], hunks[0]['removed']), (1, 1, 1))
+
+    def test_it_is_the_histogram_algorithm_not_myers(self):
+        text = self.diff('{\n}\ny\n{\n}\n', '}\n{\ny\n}\n')
+        self.assertEqual(text.split('\n', 2)[2], '@@ -1,5 +1,4 @@\n-{\n }\n+{\n y\n-{\n }\n')
+
+    def test_relative_paths_work_from_another_folder(self):
+        work = os.path.join(self.tmp.name, 'checkout')
+        scratch = os.path.join(self.tmp.name, 'scratch')
+        os.makedirs(os.path.join(work, 'expected'))
+        os.makedirs(scratch)
+        with open(os.path.join(work, 'expected', 'x'), 'w') as handle:
+            handle.write('a\nb\n')
+        with open(os.path.join(scratch, 'actual'), 'w') as handle:
+            handle.write('a\nB\n')
+        before = os.getcwd()
+        os.chdir(work)
+        try:
+            text = runner.histogram_diff(os.path.join('expected', 'x'), os.path.join(scratch, 'actual'),
+                                         ('expected/x', 'actual/x'), scratch)
+        finally:
+            os.chdir(before)
+        self.assertIn('-b\n+B', text)
+
+    def test_identical_files_and_missing_git_give_none(self):
+        self.assertIsNone(self.diff('same\n', 'same\n'))
+        with mock.patch('runner.subprocess.run', side_effect = FileNotFoundError):
+            self.assertIsNone(self.diff('a\n', 'b\n'))
+
+    def test_binary_looking_text_and_missing_final_newline(self):
+        text = self.diff('a\x00b\nend', 'a\x00c\nend')
+        self.assertIn('-a\x00b', text)
+        self.assertIn('+a\x00c', text)
+        self.assertIn('\\ No newline at end of file', self.diff('x\ny', 'x\nz'))
+
+
+class AnalyzeFailureTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        from hub import diffparse
+        self.diffparse = diffparse
+        lines = ['=' * 12, 'docid: 1', 'RELURL: one', '=' * 12, 'a', 'b', 'c', 'x', '=' * 12, 'docid: 2', 'RELURL: two', '=' * 12, 'd', 'y', 'e']
+        new   = list(lines); new[7] = 'X'; new[13] = 'Y'
+        self.old_path, self.new_path = os.path.join(self.tmp.name, 'old'), os.path.join(self.tmp.name, 'new')
+        for path, content in ((self.old_path, lines), (self.new_path, new)):
+            with open(path, 'w') as handle:
+                handle.write('\n'.join(content) + '\n')
+        import subprocess
+        self.raw = subprocess.run(['diff', '-u', '--label', 'expected/x', '--label', 'actual/x', self.old_path, self.new_path],
+                                  stdout = subprocess.PIPE).stdout.decode()
+        self.rule = diffparse.compile_formats([{'outputs': ['x'], 'label': '^RELURL: (.+)$',
+                                                'start': [['^={10,}$', '^docid:', '^RELURL:']]}])[0]
+
+    def test_a_record_rule_cuts_the_hunks_labels_them_and_keeps_the_header_lines(self):
+        text, stats, summary = runner.analyze_failure(self.raw, self.old_path, [], self.rule)
+        self.assertTrue(text.startswith('--- expected/x\n+++ actual/x\n@@ '))
+        self.assertEqual(len(self.diffparse.parse_unified(self.raw)), 1)
+        pieces = self.diffparse.parse_unified(text)
+        self.assertEqual([h['label'] for h in pieces], ['one', 'two'])
+        self.assertEqual((stats['hunks'], stats['documents'], stats['added'], stats['removed']), (2, 2, 2, 2))
+        self.assertEqual([s['label'] for s in summary], ['one', 'two'])
+
+    def test_without_a_rule_the_markers_label_the_hunks_and_nothing_is_cut(self):
+        markers = self.diffparse.compile_markers(['^RELURL:\\s*(.+)$'])
+        text, stats, summary = runner.analyze_failure(self.raw, self.old_path, markers, None)
+        self.assertEqual(stats['hunks'], 1)
+        self.assertEqual(self.diffparse.parse_unified(text)[0]['rows'], self.diffparse.parse_unified(self.raw)[0]['rows'])
+
+    def test_a_rule_that_finds_no_records_falls_back_to_the_markers(self):
+        rule = self.diffparse.compile_formats([{'outputs': ['x'], 'start': [['^NEVER$']]}])[0]
+        markers = self.diffparse.compile_markers(['^RELURL:\\s*(.+)$'])
+        text, stats, summary = runner.analyze_failure(self.raw, self.old_path, markers, rule)
+        self.assertEqual(stats['hunks'], 1)
+        self.assertEqual(summary[0]['label'], 'one')
+
+
+class HistogramHeaderTest(unittest.TestCase):
+    def test_git_function_context_text_is_not_kept_as_a_label(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        old, new = os.path.join(tmp.name, 'o'), os.path.join(tmp.name, 'n')
+        with open(old, 'w') as handle:
+            handle.write('RELURL: some/doc\n' + 'filler\n' * 20 + 'old\n')
+        with open(new, 'w') as handle:
+            handle.write('RELURL: some/doc\n' + 'filler\n' * 20 + 'new\n')
+        text = runner.histogram_diff(old, new, ('e', 'a'), tmp.name)
+        self.assertRegex(text, r'(?m)^@@ -\d+,\d+ \+\d+,\d+ @@$')
 
 
 class ShardedRunTest(unittest.TestCase):

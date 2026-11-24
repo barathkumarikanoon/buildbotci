@@ -1,6 +1,10 @@
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
+
+
+# Settings of the connection that may be given in the URL, for example ?sslmode=require
+CONNECTION_OPTIONS = ('sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'connect_timeout', 'application_name')
 
 
 def database_from_url(url, schema = ''):
@@ -16,7 +20,10 @@ def database_from_url(url, schema = ''):
         config = {'ENGINE': 'django.db.backends.postgresql', 'NAME': unquote(parts.path.lstrip('/')),
                   'USER': unquote(parts.username or ''), 'PASSWORD': unquote(parts.password or ''),
                   'HOST': parts.hostname or '', 'PORT': str(parts.port or '')}
+        options = {key: value for key, value in parse_qsl(parts.query) if key in CONNECTION_OPTIONS}
         if schema:
-            config['OPTIONS'] = {'options': '-c search_path=%s' % schema}
+            options['options'] = '-c search_path=%s' % schema
+        if options:
+            config['OPTIONS'] = options
         return config
     raise ImproperlyConfigured('Only sqlite and postgresql database URLs are supported, got: %s' % scheme)

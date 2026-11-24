@@ -1,11 +1,12 @@
 import contextlib
 import io
+import json
 import os
 import tempfile
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 
 from ciweb.runs import buildbot_client, views
 from hub.store import Store
@@ -86,8 +87,38 @@ class RunPagesTest(ResultsMixin, TestCase):
         self.assertIn('Why it failed', html)
         self.assertIn('doc/3', html)
         self.assertIn('doc/18', html)
-        self.assertIn('<mark>THREE</mark>', html)
         self.assertIn('<td class="code del">', html)
+
+    def test_the_runner_writes_the_document_of_each_region_into_the_diff(self):
+        text = open(os.path.join(self.store.test_path('r1', 'fake.differs'), 'diff.txt'), encoding = 'utf8').read()
+        self.assertRegex(text, r'(?m)^@@ -\d+,\d+ \+\d+,\d+ @@ doc/3$')
+        self.assertRegex(text, r'(?m)^@@ -\d+,\d+ \+\d+,\d+ @@ doc/18$')
+
+    def edit_diff(self, change):
+        path = os.path.join(self.store.test_path('r1', 'fake.differs'), 'diff.txt')
+        with open(path, encoding = 'utf8', newline = '') as handle:
+            original = handle.read()
+        with open(path, 'w', encoding = 'utf8', newline = '') as handle:
+            handle.write(change(original))
+        self.addCleanup(lambda: open(path, 'w', encoding = 'utf8', newline = '').write(original))
+
+    def test_regions_of_one_document_are_one_number(self):
+        self.edit_diff(lambda t: t.replace('@@ doc/18', '@@ doc/3'))
+        html = self.get('/run/r1/test/fake.differs')
+        self.assertEqual(html.count('class="hunk" id="h'), 1)
+        self.assertIn('<strong>#1</strong>', html)
+        self.assertNotIn('<strong>#2</strong>', html)
+        self.assertIn('2 regions', html)
+        self.assertEqual(html.count('<table class="diff split">'), 2)
+        self.assertIn('Diff <span class="pill">1</span>', html)
+
+    def test_a_diff_saved_before_labels_were_written_into_it_still_shows_every_region(self):
+        import re
+        self.edit_diff(lambda t: re.sub(r'(?m)^(@@ [^@]*@@).*$', r'\1', t))
+        html = self.get('/run/r1/test/fake.differs')
+        self.assertIn('<strong>#1</strong>', html)
+        self.assertIn('<strong>#2</strong>', html)
+        self.assertIn('doc/18', html)
 
     def test_diff_page_escapes_output(self):
         html = self.get('/run/r1/test/fake.differs')
@@ -395,14 +426,186 @@ class ShardedRunPageTest(ResultsMixin, TestCase):
         self.assertEqual(data['state'], 'running')
 
 
-class BuildbotLinkTest(TestCase):
-    @override_settings(BUILDBOT_PUBLIC_URL = '/buildbot/')
-    def test_the_header_links_to_buildbot_when_it_is_known(self):
-        self.assertIn('<a href="/buildbot/" class="navlink buildbot-link">Buildbot ↗</a>', self.client.get('/').content.decode())
+class StopRunTest(ResultsMixin, TestCase):
+    def setUp(self):
+        self.build_results()
+        with contextlib.redirect_stdout(io.StringIO()):
+            fixtures.call_with_fake('cmd_plan', self.results, self.work)
+        self.client.force_login(make_user('alice'))
+        self.outcome = {'builds': [11, 12], 'requests': [], 'parent_started': True, 'errors': []}
 
-    @override_settings(BUILDBOT_PUBLIC_URL = '')
-    def test_there_is_no_link_when_nothing_is_configured(self):
-        self.assertNotIn('buildbot-link', self.client.get('/').content.decode())
+    def tearDown(self):
+        self.drop_results()
+
+    def stop(self, **patch):
+        patch.setdefault('return_value', self.outcome)
+        with mock.patch.object(buildbot_client, 'stop_run', **patch) as stop:
+            reply = self.client.post('/run/r1/stop')
+        return reply, stop
+
+    def test_a_running_run_shows_the_stop_button_to_a_signed_in_user(self):
+        html = self.client.get('/run/r1').content.decode()
+        self.assertIn('id="stop-run"', html)
+        self.assertIn('action="/run/r1/stop"', html)
+        self.assertNotIn('id="stop-run"', Client().get('/run/r1').content.decode())
+
+    def test_stopping_asks_buildbot_and_keeps_the_run_record_for_the_runner(self):
+        before = self.store.get_run('r1')
+        reply, stop = self.stop()
+        self.assertEqual(reply.status_code, 302)
+        args = stop.call_args[0]
+        self.assertEqual((args[0], args[3]), ('http://bb.example/', 'r1'))
+        self.assertIn('alice', args[4])
+        self.assertEqual(self.store.get_stop('r1')['by'], 'alice')
+        after = self.store.get_run('r1')
+        self.assertEqual((after['state'], after['counts']), (before['state'], before['counts']))
+        html = self.client.get('/run/r1').content.decode()
+        self.assertIn('Stop requested by alice', html)
+        self.assertNotIn('id="stop-run"', html)
+
+    def test_a_second_stop_does_not_ask_buildbot_again(self):
+        self.stop()
+        reply, stop = self.stop()
+        stop.assert_not_called()
+        self.assertIn('already requested', self.client.get(reply['Location']).content.decode())
+
+    def test_a_run_that_never_started_is_closed_by_the_page_itself(self):
+        reply, stop = self.stop(return_value = dict(self.outcome, builds = [], requests = [5], parent_started = False))
+        run = self.store.get_run('r1')
+        self.assertEqual((run['state'], run['result']), ('aborted', 'aborted'))
+        self.assertTrue(all(t['status'] == 'aborted' for t in run['tests']))
+        self.assertEqual(run['counts']['aborted'], run['counts']['total'])
+        self.assertIn('Stopped by alice', run['message'])
+
+    def test_nothing_to_stop_leaves_everything_alone(self):
+        reply, stop = self.stop(return_value = dict(self.outcome, builds = [], requests = []))
+        self.assertIsNone(self.store.get_stop('r1'))
+        self.assertIn('nothing running', self.client.get(reply['Location']).content.decode())
+
+    def test_a_buildbot_error_is_shown_and_nothing_is_recorded(self):
+        reply, stop = self.stop(side_effect = buildbot_client.BuildbotError('refused'))
+        self.assertIsNone(self.store.get_stop('r1'))
+        self.assertIn('Could not stop the run: refused', self.client.get(reply['Location']).content.decode())
+
+    def test_an_ended_run_has_no_button_and_is_not_stopped(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            fixtures.call_with_fake('cmd_finalize', self.results, self.work)
+        self.assertNotIn('id="stop-run"', self.client.get('/run/r1').content.decode())
+        reply, stop = self.stop()
+        stop.assert_not_called()
+        self.assertIn('already ended', self.client.get(reply['Location']).content.decode())
+
+    def test_only_signed_in_users_can_stop_and_only_by_post(self):
+        anonymous = Client()
+        with mock.patch.object(buildbot_client, 'stop_run') as stop:
+            reply = anonymous.post('/run/r1/stop')
+            self.assertEqual(self.client.get('/run/r1/stop').status_code, 405)
+        self.assertIn('/login', reply['Location'])
+        stop.assert_not_called()
+
+    def test_finalize_names_who_stopped_the_run(self):
+        self.stop()
+        with contextlib.redirect_stdout(io.StringIO()):
+            fixtures.call_with_fake('cmd_finalize', self.results, self.work)
+        run = self.store.get_run('r1')
+        self.assertEqual(run['result'], 'aborted')
+        self.assertEqual(run['message'], 'Stopped by alice')
+
+
+class FakeBuildbot:
+    """Just enough of Buildbot's REST API for stop_run: a few builds and queued requests."""
+    def __init__(self, builds, requests_, refuse = False):
+        self.builds, self.queued, self.refuse, self.calls = builds, requests_, refuse, []
+
+    def Session(self):
+        return self
+
+    class Reply:
+        def __init__(self, body, status = 200):
+            self.body, self.status_code = body, status
+
+        def json(self):
+            return self.body
+
+    def get(self, url, params = None, **kw):
+        path = url.split('/api/v2/')[-1] if '/api/v2/' in url else url
+        if 'auth/login' in url:
+            return self.Reply({})
+        if path == 'builders':
+            return self.Reply({'builders': [{'builderid': 1, 'name': 'regression'}, {'builderid': 2, 'name': 'regression-shard'}]})
+        if path == 'builds':
+            return self.Reply({'builds': [b for b in self.builds if not b.get('stopped')]})
+        if path == 'buildrequests':
+            return self.Reply({'buildrequests': [r for r in self.queued if not r.get('cancelled')]})
+        if path.startswith('buildsets/'):
+            bsid = int(path.split('/')[1])
+            run = [r['run'] for r in self.queued if r['buildsetid'] == bsid][0]
+            return self.Reply({'properties': [{'run_id': [run, 'Force Build Form']}]})
+        raise AssertionError(url)
+
+    def post(self, url, json = None, **kw):
+        self.calls.append((url.split('/api/v2/')[-1], json['method']))
+        if self.refuse:
+            return self.Reply({'error': {'message': 'not allowed'}}, 403)
+        kind, number = url.split('/api/v2/')[-1].split('/')
+        pool, key = (self.builds, 'buildid') if kind == 'builds' else (self.queued, 'buildrequestid')
+        for item in pool:
+            if item[key] == int(number):
+                item['stopped' if kind == 'builds' else 'cancelled'] = True
+        return self.Reply({'result': None})
+
+
+class StopRunClientTest(TestCase):
+    def run_client(self, fake):
+        with mock.patch.object(buildbot_client.requests, 'Session', fake.Session):
+            return buildbot_client.stop_run('http://bb.example/', 'ui', 'pw', 'r1', 'why')
+
+    def test_stops_the_parent_and_the_module_builds_and_cancels_queued_requests_of_that_run_only(self):
+        fake = FakeBuildbot(
+            [{'buildid': 10, 'builderid': 1, 'properties': {'run_id': ['r1', 'x']}},
+             {'buildid': 11, 'builderid': 2, 'properties': {'run_id': ['r1', 'x']}},
+             {'buildid': 99, 'builderid': 2, 'properties': {'run_id': ['other', 'x']}}],
+            [{'buildrequestid': 5, 'buildsetid': 50, 'run': 'r1'}, {'buildrequestid': 6, 'buildsetid': 60, 'run': 'other'}])
+        outcome = self.run_client(fake)
+        self.assertEqual(sorted(outcome['builds']), [10, 11])
+        self.assertEqual(len(fake.calls), len(set(fake.calls)))
+        self.assertEqual(outcome['requests'], [5])
+        self.assertTrue(outcome['parent_started'])
+        self.assertNotIn(('builds/99', 'stop'), fake.calls)
+        self.assertNotIn(('buildrequests/6', 'cancel'), fake.calls)
+
+    def test_a_run_whose_own_build_never_started_is_reported_as_such(self):
+        fake = FakeBuildbot([], [{'buildrequestid': 5, 'buildsetid': 50, 'run': 'r1'}])
+        outcome = self.run_client(fake)
+        self.assertEqual((outcome['builds'], outcome['requests'], outcome['parent_started']), ([], [5], False))
+
+    def test_a_refusal_from_buildbot_is_an_error(self):
+        fake = FakeBuildbot([{'buildid': 10, 'builderid': 1, 'properties': {'run_id': ['r1', 'x']}}], [], refuse = True)
+        with self.assertRaises(buildbot_client.BuildbotError) as caught:
+            self.run_client(fake)
+        self.assertIn('not allowed', str(caught.exception))
+
+
+class RunListPagingTest(ResultsMixin, TestCase):
+    def setUp(self):
+        self.build_results()
+        for i in range(35):
+            run_id = '20260101-%06d-ui-aaaa' % i
+            self.store.save_run(run_id, {'id': run_id, 'state': 'finished', 'result': 'passed', 'branch': 'main',
+                                         'requested_by': 'a', 'revision': 'abcdef12', 'tests': [],
+                                         'counts': {'total': 0}, 'created': '2026-01-01T10:00:00+0000'})
+
+    def tearDown(self):
+        self.drop_results()
+
+    def test_the_run_list_offers_older_runs_and_shows_the_real_total(self):
+        html = self.client.get('/').content.decode()
+        self.assertIn('35 runs', html)
+        self.assertIn('page=2', html)
+        self.assertIn('Older', html)
+        second = self.client.get('/?page=2').content.decode()
+        self.assertIn('Newer', second)
+        self.assertNotIn('page=3', second)
 
 
 class HelpersTest(TestCase):

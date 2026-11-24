@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 staticfiles/
 *.sqlite3
+# Real settings hold passwords; only deploy/bb-master.env.example is meant for git
+*.env
+ui.pid

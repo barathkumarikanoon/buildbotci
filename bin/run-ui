@@ -6,8 +6,7 @@ env_file="${REG_ENV_FILE:-$HOME/bb-master.env}"
 pid_file="${REG_UI_PID_FILE:-$venv/ui.pid}"
 bind="${REG_UI_BIND:-127.0.0.1:8020}"
 cd "$here"
-set -a
-. "$env_file"
-set +a
+set -a; . "$env_file"; set +a
 "$venv/bin/python" manage.py migrate --noinput
+"$venv/bin/python" manage.py collectstatic --noinput --verbosity 0
 exec "$venv/bin/gunicorn" -w "${REG_UI_WORKERS:-2}" -b "$bind" --pid "$pid_file" ciweb.wsgi:application

@@ -1,18 +1,26 @@
 import argparse
 import contextlib
 import fcntl
+import glob
 import inspect
 import logging
 import os
+import re
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
 import traceback
 
+def expand_path(value):
+    """A folder or file given as ~/x or $HOME/x (as it may be written in the settings file) or as an absolute path."""
+    return os.path.abspath(os.path.expanduser(os.path.expandvars(value)))
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.environ.get('REG_REPO_DIR') or os.path.join(os.path.dirname(HERE), 'indianlaw'))
+REPO = expand_path(os.environ.get('REG_REPO_DIR') or os.path.join(os.path.dirname(HERE), 'indianlaw'))
 
 PENDING = 'pending'
 ABORTED = 'aborted'
@@ -22,7 +30,7 @@ MAX_HUNK_SUMMARY = 1000
 def use_repo(repo_dir = None):
     global REPO
     if repo_dir:
-        REPO = os.path.abspath(repo_dir)
+        REPO = expand_path(repo_dir)
     if not os.path.isdir(REPO):
         raise SystemExit('Code checkout not found: %s (use --repo-dir or REG_REPO_DIR)' % REPO)
     if os.path.basename(REPO) != 'indianlaw':
@@ -96,10 +104,81 @@ def add_worktree(dest, revision):
 
 
 def remove_worktree(dest):
+    """Remove a checkout made by add_worktree: from git's list and from the disk, whatever state it is in
+    (listed but half deleted, deleted but still listed, or not listed at all). Never fails if it is already gone."""
     from hub import selection
+    dest = os.path.abspath(dest)
+    if os.path.realpath(dest) == os.path.realpath(REPO):
+        raise SystemExit('Refusing to remove the code checkout itself: %s' % dest)
     with repo_lock():
-        selection._git(REPO, 'worktree', 'remove', '--force', os.path.abspath(dest))
+        selection._git(REPO, 'worktree', 'remove', '--force', dest)
+        shutil.rmtree(dest, ignore_errors = True)
         selection._git(REPO, 'worktree', 'prune')
+
+
+TREE_RE = re.compile(r'^(?P<worker>[^/]+)/(?P<builder>regression|regression-shard)/(?:run-(?P<number>\d+)/)?indianlaw$')
+
+
+def buildbot_in_use(url, timeout = 10):
+    """What Buildbot is running right now, as a set of (worker, builder, build number); for the module builds the
+    number is None, because a worker has one module checkout. None when Buildbot cannot be asked."""
+    import json
+    import urllib.request
+
+    def fetch(path):
+        with urllib.request.urlopen(url.rstrip('/') + '/api/v2/' + path, timeout = timeout) as reply:
+            return json.load(reply)
+    try:
+        workers  = {w['workerid']: w['name'] for w in fetch('workers')['workers']}
+        builders = {b['builderid']: b['name'] for b in fetch('builders')['builders']}
+        running  = fetch('builds?complete__eq=false')['builds']
+    except (OSError, ValueError, KeyError):
+        return None
+    busy = set()
+    for build in running:
+        builder = builders.get(build['builderid'])
+        worker  = workers.get(build.get('workerid'))
+        if builder == 'regression':
+            busy.add((worker, builder, int(build['number'])))
+        elif builder == 'regression-shard':
+            busy.add((worker, builder, None))
+    return busy
+
+
+def sweep_trees(base, busy, dry_run = False):
+    """Remove the checkouts that no running build owns: every `<worker>/regression/run-N/indianlaw` and
+    `<worker>/regression-shard/indianlaw` under `base` (whether git lists them or not), plus empty run folders.
+    `busy` is the set from buildbot_in_use. Returns the removed paths. Other checkouts of the repository are never touched."""
+    from hub import selection
+    base    = os.path.abspath(base)
+    found   = {}
+
+    def note(path):
+        rel = os.path.relpath(path, base)
+        m = TREE_RE.match(rel.replace(os.sep, '/'))
+        if m and not rel.startswith('..'):
+            found[path] = (m.group('worker'), m.group('builder'), int(m.group('number')) if m.group('number') else None)
+
+    listed = selection._git(REPO, 'worktree', 'list', '--porcelain').stdout.decode('utf8', 'replace').splitlines()
+    for line in listed:
+        if line.startswith('worktree '):
+            note(os.path.abspath(line[len('worktree '):]))
+    for run_dir in glob.glob(os.path.join(base, '*', 'regression', 'run-*')):
+        note(os.path.join(run_dir, 'indianlaw'))
+    for tree in glob.glob(os.path.join(base, '*', 'regression-shard', 'indianlaw')):
+        note(tree)
+
+    removed = []
+    for path, owner in sorted(found.items()):
+        worker, builder, number = owner
+        if (worker, builder, number) in busy:
+            continue
+        if not dry_run:
+            remove_worktree(path)
+            if number is not None:
+                shutil.rmtree(os.path.dirname(path), ignore_errors = True)
+        removed.append(path)
+    return removed
 
 
 class Tee:
@@ -321,22 +400,63 @@ def file_size(path):
         return None
 
 
-def analyze_failure(difftext, expected_path, markers):
+GIT_DIFF_TIMEOUT = 600
+
+
+def histogram_diff(expected_path, actual_path, labels, cwd):
+    """Unified diff of two files made by `git diff --histogram`, with the same two header lines as
+    `diff -u --label`. Returns None when git cannot make it, so the caller keeps the diff it already has."""
+    env = {'PATH': os.environ.get('PATH', os.defpath), 'LC_ALL': 'C', 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_PAGER': 'cat', 'HOME': os.path.expanduser('~')}
+    expected_path = os.path.abspath(expected_path)
+    actual_path   = os.path.abspath(actual_path)
+    try:
+        run = subprocess.run(
+            ['git', 'diff', '--no-index', '--histogram', '--no-color', '--no-ext-diff', '--no-renames',
+             '--text', '--no-prefix', '--unified=3', '--', expected_path, actual_path],
+            cwd = cwd, env = env, stdout = subprocess.PIPE, stderr = subprocess.DEVNULL, timeout = GIT_DIFF_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if run.returncode != 1:
+        return None
+    text  = run.stdout.decode('utf8', 'replace')
+    start = 0 if text.startswith('@@') else text.find('\n@@') + 1
+    if start == 0 and not text.startswith('@@'):
+        return None
+    body = re.sub(r'^(@@ [^@\n]*@@).*$', r'\1', text[start:], flags = re.M)
+    return '--- %s\n+++ %s\n%s' % (labels[0], labels[1], body)
+
+
+def analyze_failure(difftext, expected_path, markers, rule = None):
+    """Returns (diff text, stats, summary). With a record rule for the output file, every hunk is cut at the
+    record (document) boundaries of the expected file and labelled with its record; the label follows the
+    closing @@ of each hunk in the returned text. Without a rule, labels come from the context markers."""
     from hub import diffparse
 
+    head  = difftext[:difftext.find('\n@@') + 1] if '\n@@' in difftext else ''
     hunks = diffparse.parse_unified(difftext)
-    diffparse.label_hunks(hunks, expected_path, markers)
+    starts = labels = None
+    if rule and hunks:
+        starts, labels = diffparse.record_index(expected_path, rule)
+    if starts:
+        hunks = diffparse.parse_unified(diffparse.split_at_documents(hunks, starts))
+        diffparse.label_by_records(hunks, starts, labels)
+        difftext = head + diffparse.format_unified(hunks)
+    else:
+        diffparse.label_hunks(hunks, expected_path, markers)
+        difftext = head + diffparse.format_unified(hunks) if hunks else difftext
     stats = diffparse.summarize(hunks)
     summary = [{'old_start': h['old_start'], 'new_start': h['new_start'],
                 'line': h['change_line'] or h['old_start'],
                 'added': h['added'], 'removed': h['removed'], 'label': h['label']}
                for h in hunks[:MAX_HUNK_SUMMARY]]
-    labels = []
+    labelled = []
     for h in hunks:
-        if h['label'] and h['label'] not in labels:
-            labels.append(h['label'])
-    stats['labels'] = len(labels)
-    return stats, summary
+        if h['label'] and h['label'] not in labelled:
+            labelled.append(h['label'])
+    stats['labels'] = len(labelled)
+    stats['documents'] = len(diffparse.group_by_label(hunks))
+    return difftext, stats, summary
 
 
 def describe_diff(stats, summary):
@@ -350,7 +470,8 @@ def describe_diff(stats, summary):
     return text
 
 
-def execute_test(regression, entry, get_obj, tdir, markers):
+def execute_test(regression, entry, get_obj, tdir, markers, formats = ()):
+    from hub import diffparse
     from hub.store import now, write_json
 
     os.makedirs(tdir, exist_ok = True)
@@ -386,7 +507,14 @@ def execute_test(regression, entry, get_obj, tdir, markers):
                             labels = ('expected/%s' % entry['output'], 'actual/%s' % entry['output']))
                         result['status'] = status
                         if status == regression.FAILED:
-                            stats, summary = analyze_failure(difftext, expected_path, markers)
+                            git_diff = histogram_diff(expected_path, actual_tmp,
+                                                      ('expected/%s' % entry['output'], 'actual/%s' % entry['output']),
+                                                      tdir)
+                            if git_diff is None:
+                                print('note: git diff --histogram could not be used; diff.txt is the plain diff -u')
+                            difftext, stats, summary = analyze_failure(
+                                git_diff or difftext, expected_path, markers,
+                                diffparse.rule_for(entry['output'], formats))
                             result['diff'] = stats
                             result['hunks'] = summary
                             result['reason'] = describe_diff(stats, summary)
@@ -465,6 +593,36 @@ def cmd_checkout(args):
     return 0
 
 
+def cmd_sweep(args):
+    use_repo(args.repo_dir)
+    base = expand_path(args.base)
+    if args.all:
+        busy = set()
+    else:
+        busy = buildbot_in_use(args.buildbot_url)
+        if busy is None:
+            print('Cannot ask Buildbot which builds are running (%s); no checkout removed' % args.buildbot_url)
+            return 0
+    removed = sweep_trees(base, busy, dry_run = args.dry_run)
+    verb = 'would remove' if args.dry_run else 'removed'
+    for path in removed:
+        print('%s old checkout %s' % (verb, path))
+    print('%d old checkout%s %s' % (len(removed), '' if len(removed) == 1 else 's', 'to remove' if args.dry_run else 'removed'))
+    return 0
+
+
+def cmd_prune(args):
+    from hub.store import Store
+    store = Store(args.results_dir)
+    names, size = store.prune(args.days, keep_latest = args.keep, dry_run = not args.yes)
+    for name in names:
+        print('%s %s' % ('removed' if args.yes else 'would remove', name))
+    print('%d run%s %s, %.1f MB' % (len(names), '' if len(names) == 1 else 's', 'removed' if args.yes else 'to remove', size / 1048576))
+    if not args.yes and names:
+        print('Nothing was deleted. Add --yes to delete them.')
+    return 0
+
+
 def cmd_release(args):
     use_repo(args.repo_dir)
     remove_worktree(args.dest)
@@ -530,6 +688,7 @@ def read_branch_catalog(args):
 def cmd_profile(args):
     use_repo(args.repo_dir)
     from hub import profile
+    args.file = expand_path(args.file)
     if not os.path.isfile(args.file):
         raise SystemExit('Profile file not found: %s' % args.file)
     target = os.path.join(REPO, '.env.%s' % args.profile)
@@ -569,7 +728,7 @@ def cmd_select(args):
 def cmd_run(args):
     ensure_paths(args.repo_dir)
     from hub import selection
-    from hub.diffparse import compile_markers
+    from hub.diffparse import compile_formats, compile_markers
     from hub.store import Store, now
 
     store    = Store(args.results_dir)
@@ -619,8 +778,9 @@ def cmd_run(args):
 
         get_obj = make_loader(regression, storage, srcs)
 
-        markers = compile_markers(selection.load_impact_map(
-            os.path.join(HERE, 'hub', 'impact_map.json')).get('context_markers', []))
+        impact  = selection.load_impact_map(os.path.join(HERE, 'hub', 'impact_map.json'))
+        markers = compile_markers(impact.get('context_markers', []))
+        formats = compile_formats(impact.get('record_formats', []))
 
         total = len(run['tests'])
         for index, item in enumerate(run['tests'], 1):
@@ -630,7 +790,7 @@ def cmd_run(args):
             print('[%d/%d] %s' % (index, total, item['id']))
 
             result = execute_test(regression, by_id[item['id']], get_obj,
-                                  store.test_path(run_id, item['id']), markers)
+                                  store.test_path(run_id, item['id']), markers, formats)
             item['status']   = result['status']
             item['duration'] = result['duration']
             run['counts'] = count_statuses(run['tests'])
@@ -737,7 +897,7 @@ def cmd_plan(args):
 def cmd_shard(args):
     ensure_paths(args.repo_dir)
     from hub import selection
-    from hub.diffparse import compile_markers
+    from hub.diffparse import compile_formats, compile_markers
     from hub.store import Store, now
 
     store = Store(args.results_dir)
@@ -779,8 +939,9 @@ def cmd_shard(args):
         store.save_shard(args.run_id, shard['index'], data)
 
         get_obj = make_loader(regression, storage, srcs, env_error)
-        markers = compile_markers(selection.load_impact_map(
-            os.path.join(HERE, 'hub', 'impact_map.json')).get('context_markers', []))
+        impact  = selection.load_impact_map(os.path.join(HERE, 'hub', 'impact_map.json'))
+        markers = compile_markers(impact.get('context_markers', []))
+        formats = compile_formats(impact.get('record_formats', []))
 
         total = len(data['tests'])
         for index, item in enumerate(data['tests'], 1):
@@ -790,7 +951,7 @@ def cmd_shard(args):
             print('[%d/%d] %s' % (index, total, item['id']))
 
             result = execute_test(regression, by_id[item['id']], get_obj,
-                                  store.test_path(args.run_id, item['id']), markers)
+                                  store.test_path(args.run_id, item['id']), markers, formats)
             item['status']   = result['status']
             item['duration'] = result['duration']
             store.save_shard(args.run_id, shard['index'], data)
@@ -836,10 +997,18 @@ def cmd_finalize(args):
     if not run:
         print('no such run: %s' % args.run_id)
         return 2
+    stop = store.get_stop(args.run_id)
     if run.get('state') == 'queued':
         run['state']    = 'finished'
         run['result']   = 'error'
         run['message']  = 'The build failed before any test was selected; see the Buildbot build log'
+        if stop:
+            run['state']   = 'aborted'
+            run['result']  = 'aborted'
+            run['message'] = 'Stopped by %s before any test ran' % stop.get('by')
+            for item in run.get('tests', []):
+                item['status'] = ABORTED
+            run['counts'] = count_statuses(run.get('tests', []))
         run['finished'] = now()
         store.save_run(args.run_id, run)
         print(run['message'])
@@ -868,7 +1037,9 @@ def cmd_finalize(args):
     messages = ['Shard %d (%s) did not finish: %s%s' % (
         s['index'], ' '.join(s['modules']), s.get('state') or 'never started',
         ' - ' + s['message'] if s.get('message') else '') for s in incomplete]
-    if messages:
+    if stop and run['result'] == 'aborted':
+        run['message'] = 'Stopped by %s' % stop.get('by')
+    elif messages:
         run['message'] = '; '.join(messages)
     elif not run['tests']:
         run['message'] = 'No regression tests are impacted by this change'
@@ -959,6 +1130,21 @@ def get_parser():
     profile.add_argument('--file', required = True)
     profile.add_argument('--profile', required = True)
     profile.set_defaults(func = cmd_profile)
+
+    sweep = sub.add_parser('sweep')
+    sweep.add_argument('--base', default = os.environ.get('REG_WORKERS_DIR', '~/.buildbotci'),
+                       help = 'folder that holds the worker folders (REG_WORKERS_DIR), default ~/.buildbotci')
+    sweep.add_argument('--buildbot-url', default = os.environ.get('REG_BUILDBOT_URL', 'http://localhost:8010/'))
+    sweep.add_argument('--all', action = 'store_true',
+                       help = 'remove every checkout; only for when Buildbot is stopped')
+    sweep.add_argument('--dry-run', action = 'store_true', help = 'only list what would be removed')
+    sweep.set_defaults(func = cmd_sweep)
+
+    prune = sub.add_parser('prune')
+    prune.add_argument('--days', type = int, required = True, help = 'remove runs that ended more than this many days ago')
+    prune.add_argument('--keep', type = int, default = 50, help = 'never remove the newest N runs (default 50)')
+    prune.add_argument('--yes', action = 'store_true', help = 'really delete; without it only lists')
+    prune.set_defaults(func = cmd_prune)
 
     release = sub.add_parser('release')
     release.add_argument('--dest', required = True)

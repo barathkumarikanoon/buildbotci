@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Remove the old checkouts (git worktrees) that finished, stopped, crashed or killed builds left behind.
+#
+#   bin/clean-worktrees          while Buildbot runs: removes only checkouts no running build is using
+#   bin/clean-worktrees --all    removes every build checkout; use it when Buildbot is stopped
+#
+# Buildbot does this by itself too: every build ends by removing its checkout, and every run starts by
+# sweeping the leftovers of earlier ones. This command is for the case where nothing is running to do it.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${REG_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${REG_ENV_FILE:-$HOME/bb-master.env}"; set +a
+cd "$here"
+exec "$venv/bin/python" runner.py sweep "$@"

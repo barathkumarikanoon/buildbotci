@@ -17,7 +17,8 @@ STATUS_ORDER = {'error': 0, 'failed': 1, 'no_expected': 2, 'aborted': 3,
 RAW_FILES    = {'actual': 'actual', 'expected': 'expected', 'diff': 'diff.txt', 'log': 'log.txt'}
 INLINE_LIMIT = 256 * 1024
 TAIL_LIMIT   = 128 * 1024
-HUNKS_PER_PAGE = 15
+DOCS_PER_PAGE  = 15
+MAX_SUMMARY_ROWS = 1000
 SIGNS = {'add': '+', 'del': '-', 'ctx': ' '}
 
 
@@ -101,7 +102,7 @@ def index(request):
                          segments = bar_segments(counts),
                          badge = run.get('result') or run.get('state')))
     busy = []
-    for run in data.list_runs(limit = 10, state = 'running')[0] + data.list_runs(limit = 10, state = 'queued')[0]:
+    for run in data.list_runs(limit = 10, state = 'running', recent = 300)[0] + data.list_runs(limit = 10, state = 'queued', recent = 300)[0]:
         counts = run.get('counts') or {}
         busy.append(dict(run, url = reverse('run_view', args = [run['id']]),
                          segments = bar_segments(counts),
@@ -156,10 +157,8 @@ def run_view(request, run_id):
     shards = []
     for shard in run.get('shards') or []:
         state = shard.get('state') or 'pending'
-        build = shard.get('build') or {}
         shards.append(dict(shard, state = state, modules_text = ' '.join(shard.get('modules') or []),
-                           cls = {'finished': 'passed', 'error': 'error', 'aborted': 'aborted', 'running': 'running'}.get(state, 'pending'),
-                           build_url = build.get('url') or '', build_number = build.get('number')))
+                           cls = {'finished': 'passed', 'error': 'error', 'aborted': 'aborted', 'running': 'running'}.get(state, 'pending')))
     sel = run.get('selection')
     selection_info = None
     if sel:
@@ -185,21 +184,15 @@ def run_view(request, run_id):
         'live_url': fmt.with_query(here, partial = 1, status = status, q = query),
         'api_url': reverse('api_run', args = [run_id]),
         'tail_url': reverse('api_tail', args = [run_id]),
+        'stop': data.get_stop(run_id) if live else None,
+        'stop_url': reverse('stop_run', args = [run_id]),
     }
     return render(request, 'runs/run_live.html' if request.GET.get('partial') else 'runs/run.html', context)
 
 
 def split_rows(pairs):
-    rows = []
-    for left, right in pairs:
-        if left[2] == 'del' and right[2] == 'add':
-            parts = diffparse.intraline(left[1], right[1])
-            rows.append({'lno': left[0], 'lcls': 'del', 'ltext': fmt.marked(parts[0]),
-                         'rno': right[0], 'rcls': 'add', 'rtext': fmt.marked(parts[1])})
-        else:
-            rows.append({'lno': left[0], 'lcls': left[2], 'ltext': left[1],
-                         'rno': right[0], 'rcls': right[2], 'rtext': right[1]})
-    return rows
+    return [{'lno': left[0], 'lcls': left[2], 'ltext': left[1], 'rno': right[0], 'rcls': right[2], 'rtext': right[1]}
+            for left, right in pairs]
 
 
 @require_safe
@@ -217,35 +210,42 @@ def test_view(request, run_id, test_id):
     page   = number(request)
     here   = reverse('test_view', args = [run_id, test_id])
 
-    hunks, total_hunks = [], 0
+    hunks, groups, total_hunks = [], [], 0
     diff_path = os.path.join(tdir, 'diff.txt')
     if result and result['status'] == 'failed' and os.path.exists(diff_path):
-        with open(diff_path, 'r', encoding = 'utf8', errors = 'replace') as handle:
+        with open(diff_path, 'r', encoding = 'utf8', errors = 'replace', newline = '') as handle:
             parsed = diffparse.parse_unified(handle.read())
-        summary = result.get('hunks') or []
-        for index, hunk in enumerate(parsed):
-            if index < len(summary):
-                hunk['label'] = summary[index].get('label')
         total_hunks = len(parsed)
-        start = (page - 1) * HUNKS_PER_PAGE
-        for index in range(start, min(start + HUNKS_PER_PAGE, total_hunks)):
-            hunk = parsed[index]
-            entry = {'number': index + 1, 'line': hunk.get('change_line') or hunk.get('old_start'),
-                     'added': hunk.get('added'), 'removed': hunk.get('removed'), 'label': hunk.get('label')}
-            if view == 'split':
-                entry['split'] = split_rows(diffparse.side_by_side(hunk))
-            else:
-                entry['unified'] = [{'tag': tag, 'old': old_no, 'new': new_no, 'sign': SIGNS[tag], 'text': text}
-                                    for tag, text, old_no, new_no in hunk['rows'] if tag != 'note']
+        summary = result.get('hunks') or []
+        if not any(h.get('label') for h in parsed):
+            # a diff saved before labels were written into it: only its first regions know their document
+            for index, hunk in enumerate(parsed):
+                if index < len(summary):
+                    hunk['label'] = summary[index].get('label')
+        groups = diffparse.group_by_label(parsed)
+        start = (page - 1) * DOCS_PER_PAGE
+        for doc_no in range(start + 1, min(start + DOCS_PER_PAGE, len(groups)) + 1):
+            group = groups[doc_no - 1]
+            entry = {'number': doc_no, 'line': group['line'], 'added': group['added'], 'removed': group['removed'],
+                     'label': group['label'], 'count': group['count'], 'parts': []}
+            for hunk in parsed[group['first']:group['first'] + group['count']]:
+                part = {'line': hunk.get('change_line') or hunk.get('old_start'),
+                        'added': hunk.get('added'), 'removed': hunk.get('removed')}
+                if view == 'split':
+                    part['split'] = split_rows(diffparse.side_by_side(hunk))
+                else:
+                    part['unified'] = [{'tag': tag, 'old': old_no, 'new': new_no, 'sign': SIGNS[tag], 'text': text}
+                                       for tag, text, old_no, new_no in hunk['rows'] if tag != 'note']
+                entry['parts'].append(part)
             hunks.append(entry)
-    pages = max((total_hunks + HUNKS_PER_PAGE - 1) // HUNKS_PER_PAGE, 1)
+    pages = max((len(groups) + DOCS_PER_PAGE - 1) // DOCS_PER_PAGE, 1)
 
     files = {name: os.path.exists(os.path.join(tdir, fname)) for name, fname in RAW_FILES.items()}
     raw   = {kind: reverse('raw_view', args = [run_id, test_id, kind]) for kind in RAW_FILES}
     summary_rows = []
-    for index, hunk in enumerate((result or {}).get('hunks') or []):
-        summary_rows.append(dict(hunk, number = index + 1, line = hunk.get('line') or hunk.get('old_start'),
-                                 url = fmt.with_query(here, page = index // HUNKS_PER_PAGE + 1, view = view) + '#h%d' % (index + 1)))
+    for doc_no, group in enumerate(groups[:MAX_SUMMARY_ROWS], 1):
+        summary_rows.append(dict(group, number = doc_no,
+                                 url = fmt.with_query(here, page = (doc_no - 1) // DOCS_PER_PAGE + 1, view = view) + '#h%d' % doc_no))
     frames = []
     for index, frame in enumerate(((result or {}).get('error') or {}).get('frames') or []):
         frames.append(dict(frame, last = index == len((result['error']['frames'])) - 1))
@@ -269,8 +269,9 @@ def test_view(request, run_id, test_id):
         'waiting': item['status'] in ('pending', 'running'),
         'running': item['status'] == 'running',
         'summary_rows': summary_rows, 'summary_count': len(summary_rows),
-        'more_hunks': bool(diff) and diff.get('hunks', 0) > len(summary_rows),
+        'more_hunks': len(groups) > len(summary_rows),
         'hunks_word': 'region' if diff.get('hunks') == 1 else 'regions',
+        'group_total': len(groups),
         'frames': frames, 'profile': run.get('profile') or 'local',
         'run_ended': run.get('state') != 'running',
         'reasons': (run.get('selection') or {}).get('reasons', {}).get(test_id, []),
@@ -412,7 +413,6 @@ def new_run(request):
             'configured': bool(settings.BUILDBOT_URL),
             'new_url': reverse('new_run'), 'refresh_url': reverse('refresh_catalog'),
             'catalog_error': error,
-            'builds_url': settings.BUILDBOT_URL.rstrip('/') + '/#/builders' if settings.BUILDBOT_URL else '',
         })
 
     mode   = 'all' if request.POST.get('mode') == 'all' else 'explicit'
@@ -460,6 +460,47 @@ def new_run(request):
         data.save_run(run_id, run)
         messages.error(request, run['message'])
     return redirect('run_view', run_id = run_id)
+
+
+@login_required
+@require_POST
+def stop_run(request, run_id):
+    run   = load_run(run_id)
+    back  = redirect('run_view', run_id = run_id)
+    data  = store()
+    who   = request.user.username
+    if run.get('state') not in RUNNING_STATES:
+        messages.info(request, 'This run has already ended.')
+        return back
+    if data.get_stop(run_id):
+        messages.info(request, 'A stop was already requested for this run.')
+        return back
+    try:
+        outcome = buildbot_client.stop_run(settings.BUILDBOT_URL, settings.BUILDBOT_USER, settings.BUILDBOT_PASS,
+                                           run_id, 'Stopped from the web UI by %s' % who)
+    except buildbot_client.BuildbotError as exc:
+        messages.error(request, 'Could not stop the run: %s' % exc)
+        return back
+    if not outcome['builds'] and not outcome['requests']:
+        messages.info(request, 'Buildbot has nothing running for this run any more. It is probably just finishing.')
+        return back
+
+    data.save_stop(run_id, who)
+    if not outcome['parent_started']:
+        # The run's own build was still waiting in the queue and is cancelled. No runner will ever write its result.
+        for item in run.get('tests', []):
+            item['status'] = 'aborted'
+        total = len(run.get('tests', []))
+        run.update({'state': 'aborted', 'result': 'aborted', 'finished': now(), 'current': None,
+                    'message': 'Stopped by %s before it started' % who,
+                    'counts': {'total': total, 'pending': 0, 'passed': 0, 'failed': 0, 'error': 0,
+                               'no_expected': 0, 'aborted': total}})
+        data.save_run(run_id, run)
+        messages.info(request, 'The run was cancelled before it started.')
+    else:
+        messages.info(request, 'Stop requested. Buildbot is stopping %d build%s; unfinished tests will show as aborted.' % (
+            len(outcome['builds']), '' if len(outcome['builds']) == 1 else 's'))
+    return back
 
 
 @login_required

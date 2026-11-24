@@ -9,6 +9,7 @@ urlpatterns = [
     path('run/<run_id>/test/<test_id>/raw/<kind>', views.raw_view, name = 'raw_view'),
     path('api/run/<run_id>', views.api_run, name = 'api_run'),
     path('api/run/<run_id>/tail', views.api_tail, name = 'api_tail'),
+    path('run/<run_id>/stop', views.stop_run, name = 'stop_run'),
     path('new', views.new_run, name = 'new_run'),
     path('catalog/refresh', views.refresh_catalog, name = 'refresh_catalog'),
     path('healthz', views.healthz, name = 'healthz'),

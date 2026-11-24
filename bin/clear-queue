@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Clear the Buildbot waiting queue: cancel every build request, build and buildset that is not finished.
+#
+# Use it when the master starts running old work by itself after a crash or a kill. The master keeps
+# unfinished work in its database and resumes it at every start.
+#
+#   bin/clear-queue            show what would be cancelled (changes nothing)
+#   bin/clear-queue --yes      cancel it
+#   bin/clear-queue --yes --run 20261123-150154-multi-c003    only the work of one run
+#
+# The master must be stopped:  buildbot stop ~/.buildbotci/master
+set -euo pipefail
+venv="${REG_UI_VENV:-$HOME/.buildbotci}"
+env_file="${REG_ENV_FILE:-$HOME/bb-master.env}"
+set -a; . "$env_file"; set +a
+"$venv/bin/python" - "$@" <<'EOF'
+import os, socket, sys, time
+import sqlalchemy as sa
+
+args = sys.argv[1:]
+apply = '--yes' in args
+run = args[args.index('--run') + 1] if '--run' in args else None
+
+with socket.socket() as probe:
+    probe.settimeout(1)
+    if probe.connect_ex(('127.0.0.1', int(os.environ.get('BUILDBOT_WWW_PORT', '8010')))) == 0:
+        sys.exit('The master is running. Stop it first:  buildbot stop ~/.buildbotci/master')
+
+engine = sa.create_engine(os.environ['BUILDBOT_DB_URL'])
+now = int(time.time())
+CANCELLED = 6
+with engine.begin() as c:
+    q = lambda sql, **p: c.execute(sa.text(sql), p)
+    if run:
+        sets = [r[0] for r in q("""select distinct s.id from buildsets s join buildset_properties p on p.buildsetid = s.id
+                                   where s.complete = 0 and p.property_name = 'run_id' and p.property_value like :v""", v = '%' + run + '%')]
+    else:
+        sets = [r[0] for r in q("select id from buildsets where complete = 0")]
+    if run:
+        reqs   = [r[0] for r in q("select id from buildrequests where complete = 0 and buildsetid in :b", b = tuple(sets) or (0,))]
+        builds = [r[0] for r in q("select id from builds where complete_at is null and buildrequestid in :r", r = tuple(reqs) or (0,))]
+    else:
+        reqs   = [r[0] for r in q("select id from buildrequests where complete = 0")]
+        builds = [r[0] for r in q("select id from builds where complete_at is null")]
+    print('unfinished buildsets      : %d' % len(sets))
+    print('unfinished build requests : %d' % len(reqs))
+    print('builds without an end time: %d' % len(builds))
+    if not apply:
+        print('\nNothing changed. Add --yes to cancel them.')
+        raise SystemExit(0)
+    if reqs:
+        q("delete from buildrequest_claims where brid in :r", r = tuple(reqs))
+        q("update buildrequests set complete = 1, results = :x, complete_at = :n where id in :r", x = CANCELLED, n = now, r = tuple(reqs))
+    if builds:
+        q("update builds set complete_at = :n, results = :x, state_string = 'cancelled (queue cleared)' where id in :b",
+          n = now, x = CANCELLED, b = tuple(builds))
+    if sets:
+        q("update buildsets set complete = 1, results = :x, complete_at = :n where id in :b", x = CANCELLED, n = now, b = tuple(sets))
+    print('\nCancelled. The master has nothing to resume now.')
+EOF
+
+# The master is stopped, so no build can be using a checkout: remove what the cancelled builds left behind.
+case " $* " in
+    *" --yes "*) "$venv/bin/python" "$(dirname "${BASH_SOURCE[0]}")/../runner.py" sweep --all ;;
+esac

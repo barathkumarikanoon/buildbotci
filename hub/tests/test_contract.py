@@ -14,7 +14,12 @@ class RegressionContractTest(unittest.TestCase):
             self.skipTest('no code checkout at %s; set REG_REPO_DIR to run the contract tests' % runner.REPO)
         self.cwd = os.getcwd()
         runner.ensure_paths()
-        import regression
+        try:
+            import regression
+        except ImportError as error:
+            os.chdir(self.cwd)
+            self.skipTest('the code at %s cannot be imported by this Python (%s); run the tests with the Python of its '
+                          'environment, for example REG_PYTHON' % (runner.REPO, error))
         if not hasattr(regression, 'MODULES'):
             os.chdir(self.cwd)
             self.skipTest('the code at %s has no regression.MODULES yet: the regression.py hook is not on this branch' % runner.REPO)
