@@ -75,6 +75,21 @@ The checkout folder must be named `indianlaw`, because the code imports `indianl
 
 Format of `~/bb-master.env`: one `KEY='value'` per line, without `export`, and a comment only on a line of its own, never after a value. systemd (`EnvironmentFile=`) skips lines that start with `export` and keeps a trailing comment as part of the value; the `bin/` scripts load the file with `set -a`, and the web UI reads it itself. Write paths as `'$HOME/...'` (or `'~/...'`) in single quotes, or as absolute paths; the master, the runner and the web UI expand them for the account that runs them. Do not set `HOME=` in the file and do not nest variables. Use absolute paths in the systemd units and inside `BUILDBOT_DB_URL`, which expand nothing (`%h` in a system unit is `/root`, not the home of `User=`).
 
+## Database layout
+
+One PostgreSQL database, `cidb`, owned by the role `ci`, with one schema for each program:
+
+| Schema | Used by | How the program is told |
+|---|---|---|
+| `buildbot` | the Buildbot master (its own tables) | `BUILDBOT_DB_URL` ends with `?options=-csearch_path%3Dbuildbot` |
+| `ciweb` | the web UI (`ci_users`, sessions, Django tables) | `REG_UI_DB_SCHEMA='ciweb'`; `ciweb/db.py` turns it into `-c search_path=ciweb` |
+
+- `REG_UI_DB_URL` is the web UI's own URL (same role and database, no `?options` part). Without it, the UI falls back to `BUILDBOT_DB_URL` and drops that `options` part, because `ciweb/db.py` keeps only the SSL and timeout options of a URL.
+- `manage.py migrate` runs `CREATE SCHEMA IF NOT EXISTS ciweb` first, then creates the tables. Buildbot does not create its schema: create `buildbot` before `buildbot create-master`.
+- Run results are not in the database. They are files under `REG_RESULTS_DIR`.
+- To wipe one program only: `DROP SCHEMA ciweb CASCADE` removes the accounts; dropping and recreating `buildbot` resets Buildbot.
+- A trailing comment after a value in `~/bb-master.env` is read as part of the value by the web UI and by systemd. Keep comments on their own lines.
+
 ## Worker folders
 
 Each worker lives in `$REG_WORKERS_DIR/<name>` (`~/.buildbotci/w1`, ...), made by `buildbot-worker create-worker`. `buildbot.tac` holds the master address, the worker name and `BUILDBOT_WORKER_PASSWORD`. The two files in `info/` are shown in Buildbot's web page: `info/admin` (who looks after the worker, for example `CI admin <admin@indiankanoon.com>`) and `info/host` (a short description, for example `CI worker w1`). The worker sends them when it connects, so restart it after editing them. The builder folders `regression/`, `regression-shard/` and `regression-catalog/` hold the throwaway checkouts of `indianlaw` while a build runs; `runner.py sweep` removes the leftovers and looks only under `REG_WORKERS_DIR`.
@@ -153,7 +168,7 @@ Nothing outside has to reach the master, so it works on a private network.
 |---|---|
 | `REG_UI_SECRET` | required. Signs the login cookies. Keep it the same between restarts, or everyone is signed out |
 | `REG_UI_DB_URL` | database for the accounts, default `BUILDBOT_DB_URL` (the Buildbot Postgres). `postgresql://` and `sqlite:///file` are supported |
-| `REG_UI_DB_SCHEMA` | Postgres schema for the account tables. Use `ci`: `migrate` creates it. Default is none (Postgres's normal one) |
+| `REG_UI_DB_SCHEMA` | Postgres schema for the account tables. Use `ciweb`: `migrate` creates it. Default is none (Postgres's normal one) |
 | `REG_UI_URL` | the public address of the UI. Links in emails and reset links use exactly this, and it is also the only host Django accepts besides `localhost` |
 | `REG_UI_ALLOWED_HOSTS` | extra host names the UI may be reached by, comma separated |
 | `REG_SIGNUP_DOMAINS` | comma separated email domains, for example `indiankanoon.com`. Someone who signs up with such an address and confirms it by email gets an active account at once. Everyone else waits for an administrator. Default empty: every account waits |

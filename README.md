@@ -38,60 +38,98 @@ For one machine: one master, three workers, and the web UI, all started by hand.
 
 **Needs:** Python 3, git, PostgreSQL, the `indianlaw` clone above, and the project's own Python environment for the tests (for example `~/.indianlaw/bin/python`).
 
-**1. Buildbot environment**
+**1. Database** (once; as the Postgres admin, `sudo -u postgres psql`)
+
+One database holds everything, with one schema for each program:
+
+| Name | What |
+|---|---|
+| role `ci` | the database login used by both programs |
+| database `cidb` | the one database |
+| schema `buildbot` | Buildbot's tables (the master) |
+| schema `ciweb` | the web UI's tables (accounts, sessions) |
+
+```sql
+CREATE ROLE ci LOGIN PASSWORD 'CHANGE-ME';
+CREATE DATABASE cidb OWNER ci;
+\c cidb
+CREATE SCHEMA buildbot AUTHORIZATION ci;
+CREATE SCHEMA ciweb    AUTHORIZATION ci;
+```
+
+Make the password with `python3 -c "import secrets; print(secrets.token_hex(12))"` and use the same one in the two URLs below.
+
+**2. Buildbot environment**
 
 ```bash
-python3 -m venv ~/.buildbotci && . ~/.buildbotci/bin/activate
+python3 -m venv ~/.buildbotci
+. ~/.buildbotci/bin/activate
 pip install -r ~/buildbotci/requirements.txt
 ```
 
-**2. Settings file `~/bb-master.env`**
+**3. Settings file `~/bb-master.env`**
 
-One `KEY='value'` per line, and no comment after a value. Write paths as `'$HOME/...'`. Leave out `export`: it works for local runs, but systemd (server setup) ignores lines that start with it.
+One `KEY='value'` per line. Put a comment on a line of its own, never after a value: the web UI and systemd read a trailing comment as part of the value. Write paths as `'$HOME/...'`. Leave out `export` for a server (systemd ignores those lines); it works for local runs.
 
 ```bash
-BUILDBOT_DB_URL='postgresql+psycopg2://buildbot:CHANGE-ME@localhost/buildbot'
+# database: user ci, database cidb. The part after ? makes Buildbot use the buildbot schema
+BUILDBOT_DB_URL='postgresql+psycopg2://ci:CHANGE-ME@localhost/cidb?options=-csearch_path%3Dbuildbot'
 BUILDBOT_WORKER_PASSWORD='CHANGE-ME'
 BUILDBOT_ADMIN_PASSWORD='CHANGE-ME'
 BUILDBOT_UI_PASSWORD='CHANGE-ME'
 BUILDBOT_URL='http://localhost:8010/'
-BUILDBOT_WORKER_INTERFACE='127.0.0.1'
 REG_WORKERS='w1,w2,w3'
 REG_CI_DIR='$HOME/buildbotci'
 REG_PYTHON='$HOME/.indianlaw/bin/python'
 REG_RESULTS_DIR='$HOME/regression-results'
 REG_WORKERS_DIR='$HOME/.buildbotci'
+# which profile (.env.<profile>) indianlaw uses
 REGRESSION_PROFILE='local'
+# optional: a private file that overrides settings such as DATADIR from .env.local
 REG_PROFILE_FILE='$HOME/.buildbotci/private/profile.env'
 REG_BRANCHES='main,2026'
 REG_CRON_MINUTE='0'
 REG_CRON_HOUR='21'
-REG_MAX_SHARDS='20'
-REG_MAX_PARALLEL_SHARDS='3'
 TZ='Asia/Kolkata'
 
 REG_UI_SECRET='CHANGE-ME-long-random-value'
-REG_UI_DB_SCHEMA='ci'
+REG_UI_DB_SCHEMA='ciweb'
+# same user, password and database as above, without the ?options part
+REG_UI_DB_URL='postgresql+psycopg2://ci:CHANGE-ME@localhost/cidb'
 REG_UI_URL='http://127.0.0.1:8020'
 REG_BUILDBOT_URL='http://localhost:8010/'
 REG_BUILDBOT_USER='regression-ui'
+
+REG_MAX_SHARDS='20'
+BUILDBOT_WORKER_INTERFACE='127.0.0.1'
+REG_MAX_PARALLEL_SHARDS='3'
 ```
 
-Fill every `CHANGE-ME`. The paths, `REG_WORKERS`, `REG_BRANCHES`, `REGRESSION_PROFILE`, `BUILDBOT_URL` and `REG_BUILDBOT_URL` have no default: the master, the runner and the web UI stop with an error that names the missing one. The other settings are listed in `CLAUDE.md`. Make a secret with `python3 -c "import secrets; print(secrets.token_hex(32))"`. Do not set `REG_UI_SECURE_COOKIES` or `REG_UI_BEHIND_PROXY` locally: the UI runs over plain HTTP. `REG_WORKERS_DIR` is the folder that holds the worker folders (`~/.buildbotci/w1`, ...).
+Fill every `CHANGE-ME` with your own value, and keep the file private (`chmod 600 ~/bb-master.env`). Make the secret with `python3 -c "import secrets; print(secrets.token_hex(32))"`. The paths, `REG_WORKERS`, `REG_BRANCHES`, `REGRESSION_PROFILE`, `BUILDBOT_URL` and `REG_BUILDBOT_URL` have no default: the master, the runner and the web UI stop with an error that names the missing one. The other settings are listed in `CLAUDE.md`. Do not set `REG_UI_SECURE_COOKIES` or `REG_UI_BEHIND_PROXY` locally: the UI runs over plain HTTP.
 
-**3. Master**
+**4. Private profile** (only if `.env.local` must be overridden)
+
+By default the worker uses the `DATADIR` that `.env.local` already sets. To override it on this machine, create the file named in `REG_PROFILE_FILE`:
 
 ```bash
-createdb buildbot
+mkdir -p ~/.buildbotci/private
+echo 'DATADIR=/home/barath-kumar/indianlaw_data' > ~/.buildbotci/private/profile.env
+```
+
+Use your own path. The file stays outside the repository, so it is never committed. If you don't need it, leave `REG_PROFILE_FILE` out: the profile step is then skipped.
+
+**5. Master**
+
+```bash
 set -a; . ~/bb-master.env; set +a
 buildbot create-master --db "$BUILDBOT_DB_URL" ~/.buildbotci/master
 cp ~/buildbotci/hub/buildbot/master.cfg ~/.buildbotci/master/master.cfg
 buildbot checkconfig ~/.buildbotci/master && buildbot start ~/.buildbotci/master
 ```
 
-Buildbot's own page is at http://localhost:8010.
+`buildbot create-master` makes Buildbot's tables inside the `buildbot` schema. Buildbot's own page is at http://localhost:8010.
 
-**4. Workers** (three, `w1` to `w3`, matching `REG_WORKERS`; a second terminal)
+**6. Workers** (three, `w1` to `w3`, matching `REG_WORKERS`)
 
 ```bash
 set -a; . ~/bb-master.env; set +a
@@ -105,15 +143,13 @@ for i in 1 2 3; do
 done
 ```
 
-The two `info/` lines are the name and description Buildbot's web page shows for each worker.
+The two `info/` lines are the name and description Buildbot's web page shows for each worker. The worker needs `git`, `REG_PYTHON`, the data directory (`DATADIR`, which must exist) and write access to `REG_RESULTS_DIR`.
 
-The worker needs `git`, `REG_PYTHON`, the data directory (`DATADIR` in the checkout's `.env.local`, which must exist) and write access to `REG_RESULTS_DIR`. By default the worker uses the `DATADIR` that `.env.local` already sets. Only if it must differ on this machine, put it in a private file and set `REG_PROFILE_FILE` to that file (leave `REG_PROFILE_FILE` out otherwise: the profile step is then skipped).
-
-**5. Web UI**
+**7. Web UI**
 
 ```bash
 cd ~/buildbotci
-python manage.py migrate            # creates the account tables
+python manage.py migrate            # creates the account tables in the ciweb schema
 python manage.py createsuperuser    # your administrator login
 python manage.py runserver          # http://127.0.0.1:8020
 ```
@@ -158,7 +194,7 @@ The same parts, kept running by systemd, with HTTPS in front of the UI. Everythi
 | `deploy/systemd/regression-ui.service` | Runs the web UI with gunicorn through `bin/run-ui` |
 | `deploy/nginx/regression-ci.conf` | HTTPS in front of the UI |
 
-**1. Prepare the machine.** Do local-setup steps 1, 3 (`create-master` and `master.cfg` only) and 4 (`create-worker` only) as the account that will run the CI. Create one worker folder per worker (`w1`, `w2`, `w3`).
+**1. Prepare the machine.** Do local-setup steps 1 (database), 2, 5 (`create-master` and `master.cfg` only) and 6 (`create-worker` only) as the account that will run the CI. Create one worker folder per worker (`w1`, `w2`, `w3`).
 
 **2. Settings file.**
 
