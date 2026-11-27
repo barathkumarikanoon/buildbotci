@@ -1,53 +1,65 @@
-# Regression CI
+# Indian Kanoon CI
 
-## What it is, and why
+## What it is
 
-`indianlaw` has a large regression test suite. Running it by hand is slow, and nobody knows what broke until someone runs it. This repository is the CI that does it for them:
+Our applications have test suites that are slow to run by hand, and nobody knows what broke until someone runs them. This repository is the CI that runs them for us. It tests **any number of repositories**, each described once, in the website, as a *repo profile*:
 
-- **Every night** it checks the watched branches (`main`, `2026`) and, if there is a new commit, runs all the tests.
-- **On demand**, a developer opens the web UI, picks tests, and clicks **Queue run**.
-- Tests are split by module and run in parallel on several workers.
-- The web UI shows live progress, logs, and a diff of expected against actual output for every failed test.
+- **Automatically**, at a time you set for each repository, it checks the branches you mark and, if there is a new commit, runs all the tests.
+- **On demand**, a developer opens a repository, clicks a branch, picks tests and clicks **Queue run**.
+- Tests are split by module and run in parallel on the repository's own workers (three by default).
+- The website shows live progress, logs and results, kept separately for each repository and branch. Suites that compare output with an expected file also show the exact difference.
 
-It is built from three parts:
+Each repository says how its tests are found and judged (its *test suite type*):
 
-| Part | What it is |
+| Type | For | A test passes when |
+|---|---|---|
+| **Output comparison** | `indianlaw` (the Indian Kanoon regression framework) | its output equals `regressions/expected/<name>` |
+| **pytest (Python tests)** | a suite run by pytest, for example `legal-chatbot` | pytest says so |
+| **Command checks** | anything runnable from a shell, for example `egazette` | the command exits as expected, and, if you ask for it, prints what a golden file says |
+
+A new type is one small class (`CLAUDE.md`, "Adding a new type of test suite").
+
+It is made of three parts:
+
+| Part | What it does |
 |---|---|
-| **Buildbot master** | Schedules the nightly check, queues runs, hands each module to a free worker |
-| **Buildbot workers** | Check out the commit and run the tests of one module at a time |
-| **Web UI** (`ciweb/`, Django) | Pick tests, start and stop runs, read results. Sign-in is needed to start a run; reading needs none |
+| **Buildbot master** | Creates the builders, schedules and workers of every repo profile by itself, queues runs, hands each module to a free worker |
+| **Buildbot workers** | Check out the commit and run the tests of one module at a time. Every repository has its own workers |
+| **Website** (`ciweb/`, Django) | Add and edit repositories, pick tests, start and stop runs, read results. Starting a run needs an account; reading needs none. Administrators manage repositories and people |
 
-The CI never changes your `indianlaw` working copy. It runs `git fetch origin` there and tests throwaway `git worktree` checkouts. Nothing in `indianlaw` refers to this repository.
+The CI never changes a repository's working copy. It runs `git fetch origin` in the clone you name and tests throwaway `git worktree` checkouts. Nothing in the tested repositories refers to this one.
 
-How it works inside (run flow, contract with `indianlaw`, all settings, accounts, data layout): see `CLAUDE.md`.
+How it works inside (run flow, repo profiles, test suite types, every setting, accounts, data layout) is in `CLAUDE.md`.
 
 ## Folders
 
 ```
 ~/
   buildbotci/     this repository
-  indianlaw/      your clone of the application repository, remote named origin
-  .buildbotci/    Buildbot virtualenv, master/ and worker folders (created below)
+  indianlaw/      a clone of a tested repository, remote named origin (one clone per repo profile)
+  egazette/
+  .buildbotci/    Buildbot virtual environment, master/ and the worker folders (made below)
+  ci-results/     results of every repository, one folder each (made by the CI)
 ```
 
-`git fetch origin` in `~/indianlaw` must work without a password (SSH key or deploy key).
+`git fetch origin` in each clone must work without a password (an SSH key or a deploy key).
 
 ## Local setup
 
-For one machine: one master, three workers, and the web UI, all started by hand.
+One machine: the master, the workers of each repository and the website, all started by you.
 
-**Needs:** Python 3, git, PostgreSQL, the `indianlaw` clone above, and the project's own Python environment for the tests (for example `~/.indianlaw/bin/python`).
+**You need:** Python 3, git, PostgreSQL, a clone of each repository to test, and the Python environment each repository's tests need (for example `~/.indianlaw/bin/python`).
 
-**1. Database** (once; as the Postgres admin, `sudo -u postgres psql`)
+**1. Database** (once, as the Postgres administrator: `sudo -u postgres psql`)
 
 One database holds everything, with one schema for each program:
 
 | Name | What |
 |---|---|
-| role `ci` | the database login used by both programs |
+| role `ci` | the database login both programs use |
 | database `cidb` | the one database |
 | schema `buildbot` | Buildbot's tables (the master) |
-| schema `ciweb` | the web UI's tables (accounts, sessions) |
+| schema `ciweb` | the website's tables (accounts, sessions, repo profiles) |
 
 ```sql
 CREATE ROLE ci LOGIN PASSWORD 'CHANGE-ME';
@@ -57,7 +69,7 @@ CREATE SCHEMA buildbot AUTHORIZATION ci;
 CREATE SCHEMA ciweb    AUTHORIZATION ci;
 ```
 
-Make the password with `python3 -c "import secrets; print(secrets.token_hex(12))"` and use the same one in the two URLs below.
+Make the password with `python3 -c "import secrets; print(secrets.token_hex(12))"` and use the same one in both database addresses below.
 
 **2. Buildbot environment**
 
@@ -69,110 +81,133 @@ pip install -r ~/buildbotci/requirements.txt
 
 **3. Settings file `~/bb-master.env`**
 
-One `KEY='value'` per line. Put a comment on a line of its own, never after a value: the web UI and systemd read a trailing comment as part of the value. Write paths as `'$HOME/...'`. Leave out `export` for a server (systemd ignores those lines); it works for local runs.
+One `KEY='value'` per line. Put a comment on a line of its own, never after a value: the website and systemd read a trailing comment as part of the value. Write paths as `'$HOME/...'`. Leave out `export` on a server (systemd ignores those lines); locally it works either way.
 
 ```bash
-# database: user ci, database cidb. The part after ? makes Buildbot use the buildbot schema
+# database: role ci, database cidb. The part after ? makes Buildbot use the buildbot schema
 BUILDBOT_DB_URL='postgresql+psycopg2://ci:CHANGE-ME@localhost/cidb?options=-csearch_path%3Dbuildbot'
 BUILDBOT_WORKER_PASSWORD='CHANGE-ME'
 BUILDBOT_ADMIN_PASSWORD='CHANGE-ME'
 BUILDBOT_UI_PASSWORD='CHANGE-ME'
 BUILDBOT_URL='http://localhost:8010/'
-REG_WORKERS='w1,w2,w3'
-REG_CI_DIR='$HOME/buildbotci'
-REG_PYTHON='$HOME/.indianlaw/bin/python'
-REG_RESULTS_DIR='$HOME/regression-results'
-REG_WORKERS_DIR='$HOME/.buildbotci'
-# which profile (.env.<profile>) indianlaw uses
-REGRESSION_PROFILE='local'
-# optional: a private file that overrides settings such as DATADIR from .env.local
-REG_PROFILE_FILE='$HOME/.buildbotci/private/profile.env'
-REG_BRANCHES='main,2026'
-REG_CRON_MINUTE='0'
-REG_CRON_HOUR='21'
+CI_DIR='$HOME/buildbotci'
+CI_RESULTS_DIR='$HOME/ci-results'
+CI_WORKERS_DIR='$HOME/.buildbotci'
 TZ='Asia/Kolkata'
 
-REG_UI_SECRET='CHANGE-ME-long-random-value'
-REG_UI_DB_SCHEMA='ciweb'
-# same user, password and database as above, without the ?options part
-REG_UI_DB_URL='postgresql+psycopg2://ci:CHANGE-ME@localhost/cidb'
-REG_UI_URL='http://127.0.0.1:8020'
-REG_BUILDBOT_URL='http://localhost:8010/'
-REG_BUILDBOT_USER='regression-ui'
-
-REG_MAX_SHARDS='20'
+CI_UI_SECRET='CHANGE-ME-long-random-value'
+CI_UI_DB_SCHEMA='ciweb'
+# same role, password and database as above, without the ?options part
+CI_UI_DB_URL='postgresql+psycopg2://ci:CHANGE-ME@localhost/cidb'
+CI_UI_URL='http://127.0.0.1:8020'
+CI_BUILDBOT_URL='http://localhost:8010/'
+CI_BUILDBOT_USER='ci-ui'
 BUILDBOT_WORKER_INTERFACE='127.0.0.1'
-REG_MAX_PARALLEL_SHARDS='3'
 ```
 
-Fill every `CHANGE-ME` with your own value, and keep the file private (`chmod 600 ~/bb-master.env`). Make the secret with `python3 -c "import secrets; print(secrets.token_hex(32))"`. The paths, `REG_WORKERS`, `REG_BRANCHES`, `REGRESSION_PROFILE`, `BUILDBOT_URL` and `REG_BUILDBOT_URL` have no default: the master, the runner and the web UI stop with an error that names the missing one. The other settings are listed in `CLAUDE.md`. Do not set `REG_UI_SECURE_COOKIES` or `REG_UI_BEHIND_PROXY` locally: the UI runs over plain HTTP.
+Replace every `CHANGE-ME` with your own value and keep the file private (`chmod 600 ~/bb-master.env`). Make the secret with `python3 -c "import secrets; print(secrets.token_hex(32))"`. The paths, `BUILDBOT_URL` and `CI_BUILDBOT_URL` have no default: the master, the runner and the website stop with an error that names the missing one. All other settings are in `CLAUDE.md`. Do not set `CI_UI_SECURE_COOKIES` or `CI_UI_BEHIND_PROXY` locally: the website runs over plain HTTP there.
 
-**4. Private profile** (only if `.env.local` must be overridden)
+Settings are named `CI_...` (or `BUILDBOT_...`).
 
-By default the worker uses the `DATADIR` that `.env.local` already sets. To override it on this machine, create the file named in `REG_PROFILE_FILE`:
+**Making both programs use this file.** One file serves the master and the website, and the variable `CI_ENV` says which one. In **every terminal** you start the master, the workers or the website from, run this first:
 
 ```bash
-mkdir -p ~/.buildbotci/private
-echo 'DATADIR=/home/barath-kumar/indianlaw_data' > ~/.buildbotci/private/profile.env
+export CI_ENV="$HOME/bb-master.env"     # use your own file name here
+echo $CI_ENV                            # check it
 ```
 
-Use your own path. The file stays outside the repository, so it is never committed. If you don't need it, leave `REG_PROFILE_FILE` out: the profile step is then skipped.
+The setting lasts until you close that terminal; nothing is written to `~/.bashrc` or any other file, so type it again in each new terminal. Without it, everything falls back to `~/bb-master.env`. For one command only, put it in front: `CI_ENV=$HOME/bb-master.env bin/master status`.
 
-**5. Master**
+- The master and the workers are started with the scripts in `bin/` (`bin/master`, `bin/workers`, ...). They load `$CI_ENV` themselves.
+- The website (`python manage.py ...`, `runserver`) reads the same file by itself.
+- You never `source` the file or export single settings by hand (the one-time `create-master` in step 4 is the only exception). A setting already exported in a terminal beats the file for the website, which is how the master and the website end up with different accounts and a "login failed (HTTP 401)".
+- After you edit the file, restart the master and the website. They only read it when they start.
+- To check that both agree:
 
 ```bash
-set -a; . ~/bb-master.env; set +a
-buildbot create-master --db "$BUILDBOT_DB_URL" ~/.buildbotci/master
-cp ~/buildbotci/hub/buildbot/master.cfg ~/.buildbotci/master/master.cfg
-buildbot checkconfig ~/.buildbotci/master && buildbot start ~/.buildbotci/master
+tr '\0' '\n' < /proc/$(cat ~/.buildbotci/master/twistd.pid)/environ | grep -E '^CI_(RESULTS_DIR|BUILDBOT_USER)='
+python manage.py shell -c "from django.conf import settings; print(settings.RESULTS_DIR, settings.BUILDBOT_USER)"
 ```
 
-`buildbot create-master` makes Buildbot's tables inside the `buildbot` schema. Buildbot's own page is at http://localhost:8010.
+Both lines must show the same results folder and the same account name.
 
-**6. Workers** (three, `w1` to `w3`, matching `REG_WORKERS`)
+On a server you do not export it by hand: systemd starts the programs, so the units name the file (see "Server setup", step 3).
+
+Nothing about one particular repository goes in this file. Its folder, Python, branches, schedule, workers and test suite type are entered in the website (step 6).
+
+**4. Master**
 
 ```bash
-set -a; . ~/bb-master.env; set +a
-for i in 1 2 3; do
-  buildbot-worker create-worker ~/.buildbotci/w$i localhost:9989 w$i "$BUILDBOT_WORKER_PASSWORD"
-done
-for i in 1 2 3; do
-  echo "CI admin <admin@indiankanoon.com>" > ~/.buildbotci/w$i/info/admin
-  echo "CI worker w$i" > ~/.buildbotci/w$i/info/host
-  buildbot-worker start ~/.buildbotci/w$i
-done
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a     # only for this one-time command
+buildbot create-master --db "$BUILDBOT_DB_URL" ~/.buildbotci/master   # once: makes the tables in the buildbot schema
+cd ~/buildbotci
+bin/master update       # copies master.cfg, checks it, starts the master
 ```
 
-The two `info/` lines are the name and description Buildbot's web page shows for each worker. The worker needs `git`, `REG_PYTHON`, the data directory (`DATADIR`, which must exist) and write access to `REG_RESULTS_DIR`.
+Buildbot's own page is at http://localhost:8010. Until the first repository exists the master runs with a stand-in builder; adding a repository needs no restart and no new `master.cfg`. `bin/master status`, `stop`, `restart` and `check` do what they say.
 
-**7. Web UI**
+**5. Website**
 
 ```bash
 cd ~/buildbotci
-python manage.py migrate            # creates the account tables in the ciweb schema
+python manage.py migrate            # creates the tables in the ciweb schema
 python manage.py createsuperuser    # your administrator login
 python manage.py runserver          # http://127.0.0.1:8020
 ```
 
-`manage.py` reads `~/bb-master.env` by itself. `runserver` reloads when you edit code, templates or the style sheet. It is for your own machine only.
+`manage.py` reads `~/bb-master.env` by itself. `runserver` reloads when you change code, templates or the style sheet. It is for your own machine only.
 
-Sign in, open the start page and press **Refresh from GitLab** once per branch so the test picker has a list. Then queue a run.
+**6. Add your first repository** (in the browser)
 
-**Stop and restart**
+Sign in as the administrator, open **Manage repositories** and press **Add a repository**. For `indianlaw`, for example:
+
+| Field | Value |
+|---|---|
+| Key / Name | `indianlaw` / `Indian Law` |
+| Clone folder | `$HOME/indianlaw` |
+| Checkout name | `indianlaw` (its code imports itself by that name) |
+| Python | `$HOME/.indianlaw/bin/python` |
+| Test suite type | Output comparison, environment profile `local` (and, if needed, a private settings file such as one with `DATADIR=...`) |
+| Branches | `main`, `2026`; tick the ones tested automatically |
+| Workers | 3 (named `indianlaw-w1` to `indianlaw-w3`) |
+
+For a repository without a test framework of its own, such as `egazette`, choose **Command checks** and list the checks one per line (`name | command`). For a pytest suite such as `legal-chatbot`, choose **pytest (Python tests)** and give the paths. Each repository can use its own Python.
+
+Coming from the time before repo profiles? `python manage.py ci_repos seed-legacy` makes the `indianlaw` profile from the old settings (`CI_BRANCHES`, `CI_PYTHON`, `CI_WORKERS`, ...) and moves the old results into their new folder. Afterwards remove those lines from `~/bb-master.env`.
+
+Saving writes the repository to Buildbot within seconds (the page says when Buildbot has it). Running builds are not interrupted.
+
+**7. Workers** (every repository has its own)
+
+Saving a repository in the website makes its worker folders on this machine **and starts the workers**; the page says what it did. For a repository that already exists, press **Create and start workers** on its page (the **Workers** card shows each worker as Connected, Busy, Not connected or Not created). From a shell:
 
 ```bash
-buildbot stop ~/.buildbotci/master
-for i in 1 2 3; do buildbot-worker stop ~/.buildbotci/w$i; done
+cd ~/buildbotci
+bin/workers start indianlaw      # or no name: every worker here
+bin/workers status               # "running, connected to the master"
 ```
 
-After you change something:
+`bin/create-workers` makes the folders from a shell, for a worker machine other than the website's, or after a warning on the save. Raising a repository's number of workers handles the new ones the same way. Started this way, workers get none of the CI's settings (no passwords): the master hands each build the few it needs. A worker needs `git`, the repository's Python, its data (for `indianlaw`, `DATADIR` must exist) and write access to `CI_RESULTS_DIR`. On a server with systemd the website cannot start units without sudo, so it shows the `sudo systemctl enable --now buildbot-worker@NAME` line to run; workers on another machine than the website are made and started there (set `CI_AUTO_CREATE_WORKERS=0` and `CI_AUTO_START_WORKERS=0`).
+
+Open the repository in the website and press **Refresh test list** once for each branch, so the test picker has a list. Then queue a run.
+
+**Stopping**
+
+```bash
+bin/workers stop          # all workers (one that is running a build is skipped; --force stops it anyway)
+bin/master stop
+```
+
+**After you change something**
 
 | You changed | Do this |
 |---|---|
-| `~/bb-master.env` | Stop and start the program that reads it |
-| `hub/buildbot/master.cfg` | `cp` it to `~/.buildbotci/master/`, then `buildbot checkconfig ~/.buildbotci/master && buildbot reconfig ~/.buildbotci/master` |
-| Web UI code | Nothing with `runserver`. Reload the browser |
-| `runner.py` | Nothing. Each run reads it fresh |
+| A repository in the website | Nothing. The master follows within seconds, and the website makes and starts any new workers |
+| `~/bb-master.env` | Restart the program that reads it |
+| `hub/buildbot/master.cfg` | `bin/master update` |
+| `hub/repos.py`, `hub/adapters/`, `hub/buildbot/repo_config.py` | `bin/master reconfig` |
+| Other code under `hub/`, `runner.py` | Nothing: every run reads it fresh |
+| Website code | Nothing with `runserver`; reload the browser |
 
 **Tests of this repository**
 
@@ -184,17 +219,19 @@ PYTHONPATH=. python -m unittest discover -s hub/tests -t .
 
 ## Server setup
 
-The same parts, kept running by systemd, with HTTPS in front of the UI. Everything needed is in `deploy/`. Nothing in it is installed by itself: copy a file, edit it, install it.
+The same parts, kept running by systemd, with HTTPS in front of the website. Everything needed is in `deploy/`. Nothing in it installs itself: copy a file, edit it, install it.
 
 | File | Use |
 |---|---|
-| `deploy/bb-master.env.example` | The full settings file for a server (HTTPS, SMTP, limits) |
+| `deploy/bb-master.env.example` | The full settings file for a server (HTTPS, email) |
 | `deploy/systemd/buildbot-master.service` | Runs the master |
-| `deploy/systemd/buildbot-worker@.service` | Runs one worker per instance (`@w1`, `@w2`, ...) with a memory limit |
-| `deploy/systemd/regression-ui.service` | Runs the web UI with gunicorn through `bin/run-ui` |
-| `deploy/nginx/regression-ci.conf` | HTTPS in front of the UI |
+| `deploy/systemd/buildbot-worker@.service` | Runs one worker per instance (`@indianlaw-w1`, `@egazette-w1`, ...) with a memory limit |
+| `deploy/systemd/ci-ui.service` | Runs the website with gunicorn through `bin/run-ui` |
+| `deploy/nginx/ci.conf` | HTTPS in front of the website |
 
-**1. Prepare the machine.** Do local-setup steps 1 (database), 2, 5 (`create-master` and `master.cfg` only) and 6 (`create-worker` only) as the account that will run the CI. Create one worker folder per worker (`w1`, `w2`, `w3`).
+The master and the website need the database, so their units `Require` and start after the Postgres unit `postgresql@localdbs.service`, and `bin/wait-for-db` holds their start until the database accepts logins. If your cluster instance has another name (`systemctl list-units 'postgresql@*'`), change it in those two files. The CI never installs or edits the Postgres unit itself. Workers talk only to the master, so they depend on the master and not on Postgres.
+
+**1. Prepare the machine.** Do local steps 1 (database), 2 and the `create-master` line of step 4 as the account that runs the CI.
 
 **2. Settings file.**
 
@@ -202,9 +239,16 @@ The same parts, kept running by systemd, with HTTPS in front of the UI. Everythi
 cp ~/buildbotci/deploy/bb-master.env.example ~/bb-master.env && chmod 600 ~/bb-master.env
 ```
 
-Fill in every `CHANGE-ME` and `<...>` value. List all workers in `REG_WORKERS`. Set `REG_UI_URL` to the real `https://` address.
+Fill in every `CHANGE-ME` and `<...>` value. Set `CI_UI_URL` to the real `https://` address.
 
-**3. Edit the systemd units.** They are set to the account `sushant` and `/home/sushant/...`. For another account, replace those in all three files. systemd does not expand `$HOME`, and `%h` means `/root` in system units, so use absolute paths.
+**3. Edit the units.** They are written for the account `sushant` and `/home/sushant/...`. For another account, replace those in all three files. systemd does not expand `$HOME`, and `%h` means `/root` in system units, so write absolute paths.
+
+Name the settings file in the units, not with `export` (a service does not see what you type in a terminal):
+
+- `buildbot-master.service`: `EnvironmentFile=/home/<account>/bb-master.env`
+- `ci-ui.service`: `Environment=CI_ENV=/home/<account>/bb-master.env` (so `bin/run-ui` reads the same file)
+
+Use the real file name in both, owned by the service account with mode 600 (it holds the passwords). After you edit the file, run `sudo systemctl restart buildbot-master ci-ui`. The workers do not load it.
 
 **4. Install and start.**
 
@@ -212,37 +256,66 @@ Fill in every `CHANGE-ME` and `<...>` value. List all workers in `REG_WORKERS`. 
 sudo cp ~/buildbotci/deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now buildbot-master
-sudo systemctl enable --now buildbot-worker@w1 buildbot-worker@w2 buildbot-worker@w3
-sudo systemctl enable --now regression-ui
+cd ~/buildbotci && python manage.py migrate && python manage.py createsuperuser     # once: the tables, then your administrator
+sudo systemctl enable --now ci-ui
 ```
 
-Match the `buildbot-worker@...` instances to `REG_WORKERS`. Size the worker memory limit as `(total RAM - 2 GB) / number of workers`. Check with `systemctl status buildbot-master` and `journalctl -u buildbot-master -n 50`. The first time, run `python manage.py createsuperuser` in `~/buildbotci`.
+Then add your repositories in the website (local step 6), the website makes the worker folders when you save a repository (`bin/create-workers` does it from a shell), then start them, one instance each:
 
-**5. HTTPS.** Edit the host name and certificate paths in `deploy/nginx/regression-ci.conf`, put it in nginx's config folder, then:
+```bash
+sudo systemctl enable --now buildbot-worker@indianlaw-w1 buildbot-worker@indianlaw-w2 buildbot-worker@indianlaw-w3
+```
+
+`enable` makes them start at boot. `bin/workers` and `bin/master` use systemd on their own when the units are installed. Size the worker memory limit as `(total memory - 2 GB) / number of workers`. Check with `systemctl status buildbot-master` and `journalctl -u buildbot-master -n 50`.
+
+**5. HTTPS.** Edit the host name and certificate paths in `deploy/nginx/ci.conf`, put it in nginx's configuration folder, then:
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-In `~/bb-master.env` set `REG_UI_BEHIND_PROXY='1'` and `REG_UI_SECURE_COOKIES='1'`, and restart `regression-ui`. Once HTTPS works, set `REG_UI_HSTS_SECONDS='31536000'` and `REG_UI_SSL_REDIRECT='1'`. Without HTTPS, passwords cross the network in clear text.
+In `~/bb-master.env` set `CI_UI_BEHIND_PROXY='1'` and `CI_UI_SECURE_COOKIES='1'`, and restart `ci-ui`. When HTTPS works, set `CI_UI_HSTS_SECONDS='31536000'` and `CI_UI_SSL_REDIRECT='1'`. Without HTTPS, passwords cross the network in clear text.
 
-**More worker machines.** Each needs this repository and `indianlaw` at the same paths as on the master, the worker unit, and a worker folder created with `buildbot-worker create-worker ... <master-host>:9989 <name> "$BUILDBOT_WORKER_PASSWORD"`. Add its name to `REG_WORKERS` on the master. All workers and the UI must see the same `REG_RESULTS_DIR` (same host or a shared mount).
+**More worker machines.** Each needs this repository and the clones it serves at the same paths as on the master (a repository's clone folder and Python are the same on every machine), the worker unit, and a worker folder made with `buildbot-worker create-worker ... <master-host>:9989 <name> "$BUILDBOT_WORKER_PASSWORD"`. Name the workers as the repo profile does (the repository's edit page, "Worker names"). All workers and the website must see the same `CI_RESULTS_DIR` (the same machine or a shared mount), because the repo profiles file lives in it. Workers on other machines are started, stopped and deleted on those machines.
 
 **Updating**
 
 ```bash
 cd ~/buildbotci && git pull
-bin/apply-update          # installs requirements, migrates, reloads the UI without dropping requests
+bin/apply-update        # installs requirements, migrates, reloads the website without dropping requests
+bin/master update       # only if hub/buildbot/master.cfg changed (running builds are kept)
 ```
 
-For `master.cfg`, copy it to the master folder and run `buildbot reconfig` (running builds are kept). After editing `~/bb-master.env`, restart the service that reads it.
+After you edit `~/bb-master.env`, restart the service that reads it.
 
-**Housekeeping (the `bin/` scripts)**
+## The `bin/` scripts
 
-All of these load `~/bb-master.env` themselves. Run them from `~/buildbotci` as the CI account.
+**Who may run them.** A script that changes something asks for the user name and password of a website **superuser** (an account made with `python manage.py createsuperuser`, or one an administrator made a superuser) and checks them against the website's accounts. You log in **once for each terminal**; the scripts after that do not ask again:
+
+```bash
+bin/login                    # asks for the name and password once
+bin/master update            # no question
+bin/workers start
+bin/login --who              # who is logged in here
+bin/logout                   # end it (also ends by itself: 30 minutes unused, 8 hours, terminal closed)
+```
+
+Running a script first, without `bin/login`, asks the same way and starts the login. The login also ends if the account is disabled, loses its superuser right or changes its password; `CI_LOGIN_MINUTES` sets the idle time (`0` asks every time). Looking is free: `status`, `check` and every dry run (without `--yes`) ask nothing, and neither do `bin/run-ui` and `bin/wait-for-db`, which systemd runs. Before the first superuser exists nothing is asked, so local setup works in order. Without a terminal (cron) set `CI_ADMIN_USER` and `CI_ADMIN_PASSWORD` for that job. Every use is logged to `$CI_RESULTS_DIR/admin-actions.log`. Details: `CLAUDE.md`, "Who may run the scripts".
+
+All load `~/bb-master.env` by themselves and build every path from `$HOME`. Run them from `~/buildbotci` as the CI account. Those that act on runs, checkouts or workers take a repository key (`KEY`) or `--repo KEY`; without one they cover every repository.
 
 | Command | What it does |
 |---|---|
-| `bin/prune-runs --days 30` | Lists runs older than 30 days. Add `--yes` to delete them. Put it in cron, nothing prunes runs by itself |
-| `bin/clean-worktrees` | Removes build checkouts left by crashed builds. `--all` only when Buildbot is stopped |
-| `bin/clear-queue` | Shows unfinished work the master would resume after a crash. `--yes` cancels it. Stop the master first |
+| `bin/master update` | Copies `master.cfg` into the master folder, checks it, then starts the master, or reloads it when it already runs (builds are kept). Also `check`, `start`, `stop`, `restart`, `reconfig`, `status` |
+| `bin/login`, `bin/logout` | Log in once for this terminal as a website superuser, so the scripts below that change something do not ask again; end it |
+| `bin/create-workers [KEY]` | Makes the worker folders that do not exist yet on this machine and says how to start them |
+| `bin/workers start\|stop\|restart\|status [KEY] [--worker NAME]` | Starts, stops, restarts or shows the workers on this machine: all, one repository's, or chosen ones. A worker running a build is not stopped unless `--force` |
+| `bin/delete-workers [KEY] [--worker NAME] [--orphans]` | Stops and deletes chosen workers on this machine; the repository stays. Shows what it would do; `--yes` does it |
+| `bin/run-ui` | Migrates, collects static files and starts the website with gunicorn (what `ci-ui.service` runs) |
+| `bin/apply-update` | Installs requirements, migrates, reloads the website |
+| `bin/wait-for-db [SECONDS]` | Waits until the database accepts logins (run by the units before they start) |
+| `bin/prune-runs --days 30` | Lists runs older than 30 days; `--yes` deletes them. Put it in cron: nothing prunes runs by itself |
+| `bin/clean-worktrees` | Removes build checkouts that crashed builds left behind; `--all` only while Buildbot is stopped |
+| `bin/clear-queue` | Shows unfinished work the master would resume after a crash; `--yes` cancels it. Stop the master first |
+
+Deleting a whole repository (its profile, workers and, if asked, its results) is **Manage repositories → the repository → Delete…** in the website, or `python manage.py ci_repos remove KEY`.

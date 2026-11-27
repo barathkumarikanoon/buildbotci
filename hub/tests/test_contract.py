@@ -4,25 +4,30 @@ import os
 import tempfile
 import unittest
 
-import runner
+from hub import repos
+from hub.adapters.comparison import OutputComparisonAdapter
 from hub.tests import app_standin, fixtures
+
+REPO_DIR = repos.expand_path(os.environ.get('CI_REPO_DIR') or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '..', 'indianlaw'))
 
 
 class RegressionContractTest(unittest.TestCase):
     def setUp(self):
-        if not os.path.isdir(runner.REPO):
-            self.skipTest('no code checkout at %s; set REG_REPO_DIR to run the contract tests' % runner.REPO)
+        if not os.path.isdir(REPO_DIR):
+            self.skipTest('no code checkout at %s; set CI_REPO_DIR to run the contract tests' % REPO_DIR)
         self.cwd = os.getcwd()
-        runner.ensure_paths()
+        config = fixtures.repo_config(os.path.dirname(REPO_DIR), repo_dir = REPO_DIR)
+        self.adapter = OutputComparisonAdapter(config, REPO_DIR, config.options)
+        self.adapter.activate()
         try:
             import regression
         except ImportError as error:
             os.chdir(self.cwd)
             self.skipTest('the code at %s cannot be imported by this Python (%s); run the tests with the Python of its '
-                          'environment, for example REG_PYTHON' % (runner.REPO, error))
+                          'environment (the Python of its repo profile)' % (REPO_DIR, error))
         if not hasattr(regression, 'MODULES'):
             os.chdir(self.cwd)
-            self.skipTest('the code at %s has no regression.MODULES yet: the regression.py hook is not on this branch' % runner.REPO)
+            self.skipTest('the code at %s has no regression.MODULES yet: the regression.py hook is not on this branch' % REPO_DIR)
         self.regression = regression
         self.tmp = tempfile.TemporaryDirectory()
         fixtures.write_expected(self.tmp.name)
@@ -93,7 +98,7 @@ class RegressionContractTest(unittest.TestCase):
             self.assertEqual(self.regression.compare_files(*pair), app_standin.compare_files(*pair))
 
     def test_the_catalog_the_ci_builds_is_complete(self):
-        catalog = runner.build_catalog(self.regression)
+        catalog = self.adapter.catalog()
         self.assertEqual(sorted(catalog['modules']), sorted(self.regression.MODULES))
         self.assertTrue(all(t['module'] in catalog['modules'] for t in catalog['tests']))
         self.assertGreater(len(catalog['tests']), len(catalog['modules']))

@@ -1,0 +1,45 @@
+# Web UI (gunicorn). Install as /etc/systemd/system/ci-ui.service, then:
+#   systemctl daemon-reload && systemctl enable --now ci-ui
+# bin/run-ui applies the database migrations and collects the static files before it starts gunicorn, so it needs the
+# database first: it is ordered after, and bound to, postgresql@localdbs.service (this file never changes that unit), and
+# bin/wait-for-db holds the start until logins work. See buildbot-master.service for the reasons.
+# If the results folder is on a shared mount, also add  RequiresMountsFor=/path/to/results
+[Unit]
+Description=CI: web UI
+Documentation=file:///home/sushant/buildbotci/CLAUDE.md
+Requires=postgresql@localdbs.service
+After=network-online.target postgresql@localdbs.service
+Wants=network-online.target
+AssertPathExists=/home/sushant/bb-master.env
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sushant
+WorkingDirectory=/home/sushant/buildbotci
+Environment=CI_UI_VENV=/home/sushant/.buildbotci
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/home/sushant/.buildbotci/bin/python /home/sushant/buildbotci/bin/wait-for-db 90
+ExecStart=/home/sushant/buildbotci/bin/run-ui
+# systemctl reload ci-ui: gunicorn starts new workers and retires the old ones without dropping requests.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# The first start runs the migrations, which can take a while after an update.
+TimeoutStartSec=180
+TimeoutStopSec=30
+SyslogIdentifier=ci-ui
+MemoryHigh=768M
+MemoryMax=1G
+TasksMax=256
+LimitNOFILE=16384
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

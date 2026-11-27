@@ -4,11 +4,14 @@
 #   bin/prune-runs --days 30             list the runs that ended more than 30 days ago (deletes nothing)
 #   bin/prune-runs --days 30 --yes       delete them
 #   bin/prune-runs --days 30 --keep 100  also keep the newest 100 runs whatever their age
+#   bin/prune-runs --days 30 --repo egazette --yes   only the runs of one repo (otherwise every repo profile is pruned)
 #
-# Never removed: queued or running runs, the newest --keep runs (default 50), and the last scheduled run of each branch.
+# Never removed: queued or running runs, the newest --keep runs of each repo (default 50), and the last scheduled run of each branch.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-venv="${REG_UI_VENV:-$HOME/.buildbotci}"
-set -a; . "${REG_ENV_FILE:-$HOME/bb-master.env}"; set +a
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
 cd "$here"
+. "$(dirname "${BASH_SOURCE[0]}")/_login"
+! ci_has --yes "$@" || ci_login prune-runs "$*"
 exec "$venv/bin/python" runner.py prune "$@"

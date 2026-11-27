@@ -4,7 +4,8 @@ from urllib.parse import urlencode
 
 STATUS_LABEL = {'error': 'error', 'failed': 'failed', 'no_expected': 'no baseline',
                 'aborted': 'aborted', 'running': 'running', 'pending': 'pending',
-                'passed': 'passed', 'queued': 'queued', 'finished': 'finished'}
+                'passed': 'passed', 'queued': 'queued', 'finished': 'finished',
+                'waiting': 'waiting for a worker', 'stalled': 'stalled'}
 
 
 def parse_time(value):
@@ -18,7 +19,11 @@ def parse_time(value):
 
 def clock(value):
     parsed = parse_time(value)
-    return parsed.strftime('%d %b %H:%M:%S') if parsed else '-'
+    return parsed.strftime('%d %B %H:%M:%S') if parsed else '-'
+
+
+def plural(number, unit):
+    return '%d %s%s' % (number, unit, '' if number == 1 else 's')
 
 
 def ago(value):
@@ -29,12 +34,12 @@ def ago(value):
     if seconds < 10:
         return 'just now'
     if seconds < 60:
-        return '%ds ago' % seconds
+        return '%s ago' % plural(seconds, 'second')
     if seconds < 3600:
-        return '%dm ago' % (seconds // 60)
+        return '%s ago' % plural(seconds // 60, 'minute')
     if seconds < 86400:
-        return '%dh ago' % (seconds // 3600)
-    return '%dd ago' % (seconds // 86400)
+        return '%s ago' % plural(seconds // 3600, 'hour')
+    return '%s ago' % plural(seconds // 86400, 'day')
 
 
 def span(seconds):
@@ -42,18 +47,18 @@ def span(seconds):
         return '-'
     seconds = int(round(seconds))
     if seconds < 60:
-        return '%ds' % seconds
+        return plural(seconds, 'second')
     if seconds < 3600:
-        return '%dm %02ds' % (seconds // 60, seconds % 60)
-    return '%dh %02dm' % (seconds // 3600, (seconds % 3600) // 60)
+        return '%s %s' % (plural(seconds // 60, 'minute'), plural(seconds % 60, 'second'))
+    return '%s %s' % (plural(seconds // 3600, 'hour'), plural((seconds % 3600) // 60, 'minute'))
 
 
 def size(value):
     if value is None:
         return '-'
-    for unit in ('B', 'KB', 'MB', 'GB'):
-        if value < 1024 or unit == 'GB':
-            return ('%d %s' % (value, unit)) if unit == 'B' else ('%.1f %s' % (value, unit))
+    for unit in ('bytes', 'kilobytes', 'megabytes', 'gigabytes'):
+        if value < 1024 or unit == 'gigabytes':
+            return ('%d %s' % (value, unit)) if unit == 'bytes' else ('%.1f %s' % (value, unit))
         value /= 1024.0
 
 

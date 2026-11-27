@@ -7,17 +7,31 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 
+from ciweb.repos.models import Branch, RepoProfile
 from ciweb.runs import buildbot_client, views
 from hub.store import Store
 from hub.tests import fixtures
 
 PASSWORD = 'blue-tractor-77x'
 
+from ciweb.runs import views as run_views
+REAL_CONNECTED_WORKERS = run_views.connected_workers          # the tests below replace it for the pages; this one is the real function
+
 
 def make_user(name, **extra):
     values = dict(is_active = True, approved = True, email_verified = True)
     values.update(extra)
     return get_user_model().objects.create_user(name, '%s@example.com' % name, PASSWORD, **values)
+
+
+def make_repo(key = 'indianlaw', branches = ('main', '2026', 'testbranch'), **extra):
+    values = dict(key = key, name = 'Indian Law', adapter = 'comparison', repo_dir = '/srv/%s' % key,
+                  options = {'env_profile': 'local'}, python = 'python3')
+    values.update(extra)
+    repo = RepoProfile.objects.create(**values)
+    for position, name in enumerate(branches):
+        Branch.objects.create(repo = repo, name = name, position = position)
+    return repo
 
 
 class ResultsMixin:
@@ -28,12 +42,19 @@ class ResultsMixin:
         cls.results = os.path.join(cls.tmp.name, 'results')
         os.makedirs(cls.work)
         fixtures.write_expected(cls.work)
-        cls.store = Store(cls.results)
+        cls.store = Store(os.path.join(cls.results, 'indianlaw'))
         cls.settings = override_settings(RESULTS_DIR = cls.results, BUILDBOT_URL = 'http://bb.example/')
         cls.settings.enable()
+        cls.workers = mock.patch('ciweb.runs.views.connected_workers', return_value = {'indianlaw-w1': {'connected': True, 'busy': 0}})
+        cls.workers.start()
+        cls.live = mock.patch('ciweb.runs.activity.buildbot_live', return_value = None)       # Buildbot cannot be asked: records are shown as they are
+        cls.live.start()
+        make_repo()
 
     @classmethod
     def drop_results(cls):
+        cls.live.stop()
+        cls.workers.stop()
         cls.settings.disable()
         cls.tmp.cleanup()
 
@@ -62,27 +83,27 @@ class RunPagesTest(ResultsMixin, TestCase):
         return reply.content.decode()
 
     def test_runs_list(self):
-        html = self.get('/')
+        html = self.get('/r/indianlaw/')
         self.assertIn('r1', html)
-        self.assertIn('Last scheduled run', html)
+        self.assertIn('Nightly at 21:00', html)
         self.assertIn('branch-card failed', html)
 
     def test_run_page_lists_failures_first_with_reasons(self):
-        html = self.get('/run/r1')
+        html = self.get('/r/indianlaw/run/r1')
         self.assertLess(html.index('fake.boom'), html.index('fake.same'))
         self.assertIn('bad thing happened', html)
         self.assertIn('Re-run 5 failing', html)
 
     def test_run_page_filters(self):
-        html = self.get('/run/r1?status=failing&partial=1')
+        html = self.get('/r/indianlaw/run/r1?status=failing&partial=1')
         self.assertIn('fake.differs', html)
         self.assertNotIn('fake.same', html)
-        html = self.get('/run/r1?q=other')
+        html = self.get('/r/indianlaw/run/r1?q=other')
         self.assertIn('other.only', html)
-        self.assertNotIn('/run/r1/test/fake.boom', html)
+        self.assertNotIn('/r/indianlaw/run/r1/test/fake.boom', html)
 
     def test_diff_page_split_view_pinpoints_the_change(self):
-        html = self.get('/run/r1/test/fake.differs')
+        html = self.get('/r/indianlaw/run/r1/test/fake.differs')
         self.assertIn('Why it failed', html)
         self.assertIn('doc/3', html)
         self.assertIn('doc/18', html)
@@ -103,107 +124,106 @@ class RunPagesTest(ResultsMixin, TestCase):
 
     def test_regions_of_one_document_are_one_number(self):
         self.edit_diff(lambda t: t.replace('@@ doc/18', '@@ doc/3'))
-        html = self.get('/run/r1/test/fake.differs')
+        html = self.get('/r/indianlaw/run/r1/test/fake.differs')
         self.assertEqual(html.count('class="hunk" id="h'), 1)
         self.assertIn('<strong>#1</strong>', html)
         self.assertNotIn('<strong>#2</strong>', html)
         self.assertIn('2 regions', html)
         self.assertEqual(html.count('<table class="diff split">'), 2)
-        self.assertIn('Diff <span class="pill">1</span>', html)
+        self.assertIn('Differences <span class="pill">1</span>', html)
 
     def test_a_diff_saved_before_labels_were_written_into_it_still_shows_every_region(self):
         import re
         self.edit_diff(lambda t: re.sub(r'(?m)^(@@ [^@]*@@).*$', r'\1', t))
-        html = self.get('/run/r1/test/fake.differs')
+        html = self.get('/r/indianlaw/run/r1/test/fake.differs')
         self.assertIn('<strong>#1</strong>', html)
         self.assertIn('<strong>#2</strong>', html)
         self.assertIn('doc/18', html)
 
     def test_diff_page_escapes_output(self):
-        html = self.get('/run/r1/test/fake.differs')
+        html = self.get('/r/indianlaw/run/r1/test/fake.differs')
         self.assertNotIn('<b>EIGHTEEN', html)
         self.assertIn('&lt;b&gt;', html)
 
     def test_diff_page_unified_view_and_paging(self):
-        html = self.get('/run/r1/test/fake.differs?view=unified&page=1')
+        html = self.get('/r/indianlaw/run/r1/test/fake.differs?view=unified&page=1')
         self.assertIn('class="diff unified"', html)
         self.assertIn('class="del"', html)
 
     def test_error_page_shows_traceback_and_frames(self):
-        html = self.get('/run/r1/test/fake.boom')
+        html = self.get('/r/indianlaw/run/r1/test/fake.boom')
         self.assertIn('ValueError: bad thing happened', html)
         self.assertIn('Full traceback', html)
         self.assertIn('boom', html)
 
     def test_a_failed_test_offers_the_complete_files_with_sizes_but_no_server_paths(self):
-        html = self.get('/run/r1/test/fake.differs')
+        html = self.get('/r/indianlaw/run/r1/test/fake.differs')
         self.assertIn('Full files', html)
-        self.assertIn('/run/r1/test/fake.differs/raw/diff?download=1', html)
-        self.assertIn('/run/r1/test/fake.differs/raw/expected?download=1', html)
-        self.assertIn('/run/r1/test/fake.differs/raw/actual?download=1', html)
+        self.assertIn('/r/indianlaw/run/r1/test/fake.differs/raw/diff?download=1', html)
+        self.assertIn('/r/indianlaw/run/r1/test/fake.differs/raw/expected?download=1', html)
+        self.assertIn('/r/indianlaw/run/r1/test/fake.differs/raw/actual?download=1', html)
         self.assertNotIn(self.results, html)
         self.assertNotIn('tests/fake.differs/diff.txt', html)
-        self.assertRegex(html, r'<span class="kind">Full diff</span>\s*<span class="sz">\d+ B</span>')
-        reply = self.client.get('/run/r1/test/fake.differs/raw/diff?download=1')
+        self.assertRegex(html, r'<span class="kind">Full differences</span>\s*<span class="sz">\d+ bytes</span>')
+        reply = self.client.get('/r/indianlaw/run/r1/test/fake.differs/raw/diff?download=1')
         self.assertEqual(b''.join(reply.streaming_content), open(os.path.join(self.store.test_path('r1', 'fake.differs'), 'diff.txt'), 'rb').read())
-        self.assertNotIn('Full files', self.get('/run/r1/test/fake.same'))
+        self.assertNotIn('Full files', self.get('/r/indianlaw/run/r1/test/fake.same'))
 
     def test_missing_baseline_page_gives_populate_command(self):
-        self.assertIn('python regression.py -P local -m fake -t nobaseline -p', self.get('/run/r1/test/fake.nobaseline'))
+        self.assertIn('python regression.py -P local -m fake -t nobaseline -p', self.get('/r/indianlaw/run/r1/test/fake.nobaseline'))
 
     def test_passing_page(self):
-        self.assertIn('matched the expected file exactly', self.get('/run/r1/test/fake.same'))
+        self.assertIn('matched the expected file exactly', self.get('/r/indianlaw/run/r1/test/fake.same'))
 
     def test_raw_files(self):
-        self.assertIn('body THREE', self.get('/run/r1/test/fake.differs/raw/actual'))
-        self.assertIn('RELURL: doc/3', self.get('/run/r1/test/fake.differs/raw/expected'))
-        self.assertIn('@@', self.get('/run/r1/test/fake.differs/raw/diff'))
-        self.assertIn('about to fail', self.get('/run/r1/test/fake.boom/raw/log'))
-        download = self.client.get('/run/r1/test/fake.differs/raw/diff?download=1')
+        self.assertIn('body THREE', self.get('/r/indianlaw/run/r1/test/fake.differs/raw/actual'))
+        self.assertIn('RELURL: doc/3', self.get('/r/indianlaw/run/r1/test/fake.differs/raw/expected'))
+        self.assertIn('@@', self.get('/r/indianlaw/run/r1/test/fake.differs/raw/diff'))
+        self.assertIn('about to fail', self.get('/r/indianlaw/run/r1/test/fake.boom/raw/log'))
+        download = self.client.get('/r/indianlaw/run/r1/test/fake.differs/raw/diff?download=1')
         self.assertIn('attachment', download.headers['Content-Disposition'])
 
     def test_raw_rejects_unknown_kinds_and_missing_files(self):
-        self.get('/run/r1/test/fake.same/raw/actual', 404)
-        self.get('/run/r1/test/fake.same/raw/result.json', 404)
-        self.get('/run/r1/test/fake.same/raw/..', 404)
+        self.get('/r/indianlaw/run/r1/test/fake.same/raw/actual', 404)
+        self.get('/r/indianlaw/run/r1/test/fake.same/raw/result.json', 404)
+        self.get('/r/indianlaw/run/r1/test/fake.same/raw/..', 404)
 
     def test_path_traversal_ids_are_rejected(self):
-        self.get('/run/..%2f..%2fetc/test/x', 404)
-        self.get('/run/r1/test/..', 404)
-        self.get('/api/run/r1/tail?test=..%2f..', 404)
+        self.get('/r/indianlaw/run/..%2f..%2fetc/test/x', 404)
+        self.get('/r/indianlaw/run/r1/test/..', 404)
+        self.get('/r/indianlaw/api/run/r1/tail?test=..%2f..', 404)
 
     def test_unknown_run_and_test(self):
-        self.get('/run/nope', 404)
-        self.get('/run/r1/test/fake.nope', 404)
+        self.get('/r/indianlaw/run/nope', 404)
+        self.get('/r/indianlaw/run/r1/test/fake.nope', 404)
 
     def test_tail_api_is_incremental(self):
-        first = self.client.get('/api/run/r1/tail?test=fake.boom').json()
+        first = self.client.get('/r/indianlaw/api/run/r1/tail?test=fake.boom').json()
         self.assertIn('about to fail', first['text'])
-        again = self.client.get('/api/run/r1/tail?test=fake.boom&offset=%d' % first['offset']).json()
+        again = self.client.get('/r/indianlaw/api/run/r1/tail?test=fake.boom&offset=%d' % first['offset']).json()
         self.assertEqual(again['text'], '')
-        self.assertIn('summary:', self.client.get('/api/run/r1/tail').json()['text'])
+        self.assertIn('summary:', self.client.get('/r/indianlaw/api/run/r1/tail').json()['text'])
 
     def test_a_bad_page_number_does_not_crash(self):
-        self.get('/?page=abc')
-        self.get('/run/r1/test/fake.differs?page=abc')
+        self.get('/r/indianlaw/?page=abc')
+        self.get('/r/indianlaw/run/r1/test/fake.differs?page=abc')
 
     def test_head_requests_work_for_monitoring(self):
         self.assertEqual(self.client.head('/healthz').status_code, 200)
-        self.assertEqual(self.client.head('/').status_code, 200)
+        self.assertEqual(self.client.head('/r/indianlaw/').status_code, 200)
 
-    def test_failing_shortcut_also_uses_a_cancelled_run(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            other = Store(tmp)
-            other.save_catalog(self.store.catalog('main'), 'main')
-            other.save_run('r2', dict(self.store.get_run('r1'), id = 'r2', state = 'aborted', result = 'aborted'))
-            with override_settings(RESULTS_DIR = tmp):
-                self.assertIn('failing in r2', self.get('/new'))
-
-    def test_new_run_form_lists_catalog_and_failing(self):
-        html = self.get('/new?tests=fake.same')
+    def test_new_run_form_lists_the_catalog_without_failing_shortcuts(self):
+        html = self.get('/r/indianlaw/new?tests=fake.same')
         self.assertIn('fake.differs', html)
-        self.assertIn('Select 5 failing in r1', html)
+        self.assertNotIn('Select 5 failing', html)
+        self.assertNotIn('sel-failing', html)
+        self.assertNotIn('mod-failing', html)
         self.assertIn('value="fake.same" checked', html)
+
+    def test_the_picker_can_expand_and_collapse_every_module(self):
+        html = self.get('/r/indianlaw/new')
+        self.assertIn('id="toggle-modules"', html)
+        self.assertIn('Expand all', html)
 
 
 class TriggerTest(ResultsMixin, TestCase):
@@ -224,7 +244,7 @@ class TriggerTest(ResultsMixin, TestCase):
 
     def submit(self, data, client = None, **patch):
         with mock.patch.object(buildbot_client, 'force_build', **patch) as force:
-            reply = (client or self.alice).post('/new', data)
+            reply = (client or self.alice).post('/r/indianlaw/new', data)
         return reply, force
 
     def newest(self):
@@ -235,7 +255,7 @@ class TriggerTest(ResultsMixin, TestCase):
                                     'reason': 'check', 'requested_by': 'someone else'}, return_value = [1, {}])
         run = self.newest()
         self.assertEqual(reply.status_code, 302)
-        self.assertTrue(reply['Location'].endswith('/run/%s' % run['id']))
+        self.assertTrue(reply['Location'].endswith('/r/indianlaw/run/%s' % run['id']))
         self.assertEqual((run['state'], run['trigger'], run['requested_by']), ('queued', 'manual', 'alice'))
         self.assertEqual([t['id'] for t in run['tests']], ['m.a', 'm.b', 'n.c'])
         params = force.call_args[0][4]
@@ -258,8 +278,8 @@ class TriggerTest(ResultsMixin, TestCase):
         self.store.save_catalog({'modules': {'z': {'class': 'Z', 'source': 'z.py'}},
                                  'tests': [{'id': 'z.only2026', 'module': 'z', 'name': 'only2026', 'output': 'o', 'has_expected': True}],
                                  'revision': 'abcdef1234567890', 'generated': 'then'}, '2026')
-        main_page = self.alice.get('/new?branch=main').content.decode()
-        page_2026 = self.alice.get('/new?branch=2026').content.decode()
+        main_page = self.alice.get('/r/indianlaw/new?branch=main').content.decode()
+        page_2026 = self.alice.get('/r/indianlaw/new?branch=2026').content.decode()
         self.assertIn('m.a', main_page)
         self.assertNotIn('z.only2026', main_page)
         self.assertIn('z.only2026', page_2026)
@@ -270,14 +290,14 @@ class TriggerTest(ResultsMixin, TestCase):
         self.assertEqual(force.call_args[0][4]['tests'], 'z')
 
     def test_a_branch_without_a_test_list_explains_what_to_do_and_hides_the_empty_picker(self):
-        html = self.alice.get('/new?branch=2026').content.decode()
+        html = self.alice.get('/r/indianlaw/new?branch=2026').content.decode()
         self.assertIn('No test list for <strong>2026</strong> yet', html)
-        self.assertIn('Refresh from GitLab', html)
+        self.assertIn('Refresh test list', html)
         self.assertIn('Still empty after a minute?', html)
         self.assertNotIn('id="picker"', html)
         self.assertNotIn('0 selected', html)
         self.assertIn('Run everything on 2026', html)
-        self.assertIn('/new?branch=main', html)
+        self.assertIn('/r/indianlaw/new?branch=main', html)
         self.assertIn('branch-tab', html)
         self.assertIn('no list yet', html)
 
@@ -288,32 +308,32 @@ class TriggerTest(ResultsMixin, TestCase):
 
     def test_a_failed_refresh_shows_why_and_a_good_refresh_clears_it(self):
         self.store.save_catalog_error('2026', '2026: This branch has no regression.MODULES')
-        html = self.alice.get('/new?branch=2026').content.decode()
+        html = self.alice.get('/r/indianlaw/new?branch=2026').content.decode()
         self.assertIn('The last refresh failed', html)
         self.assertIn('This branch has no regression.MODULES', html)
         self.store.save_catalog({'modules': {'z': {'class': 'Z', 'source': 'z.py'}}, 'tests': [
             {'id': 'z.t', 'module': 'z', 'name': 't', 'output': 'o', 'has_expected': True}], 'revision': 'abc', 'generated': 'now'}, '2026')
-        html = self.alice.get('/new?branch=2026').content.decode()
+        html = self.alice.get('/r/indianlaw/new?branch=2026').content.decode()
         self.assertNotIn('The last refresh failed', html)
         self.assertIn('1 module, 1 test,', html)
 
     def test_counts_use_the_right_plural(self):
-        html = self.alice.get('/new?branch=main').content.decode()
+        html = self.alice.get('/r/indianlaw/new?branch=main').content.decode()
         self.assertIn('3 tests', html)
         self.assertNotIn('1 tests', html)
 
     def test_refresh_asks_buildbot_to_read_the_branch_and_needs_a_login(self):
         with mock.patch.object(buildbot_client, 'force_build', return_value = None) as force:
-            reply = self.bob.post('/catalog/refresh', {'branch': '2026'})
+            reply = self.bob.post('/r/indianlaw/catalog/refresh', {'branch': '2026'})
             self.assertEqual(reply.status_code, 302)
-            self.assertEqual(force.call_args[0][3], 'force-catalog')
+            self.assertEqual(force.call_args[0][3], 'catalog-indianlaw')
             self.assertEqual(force.call_args[0][4], {'branch': '2026', 'reason': 'bob: refresh test list'})
             force.reset_mock()
-            reply = self.client_class().post('/catalog/refresh', {'branch': '2026'})
+            reply = self.client_class().post('/r/indianlaw/catalog/refresh', {'branch': '2026'})
             self.assertIn('/login', reply['Location'])
-            self.alice.post('/catalog/refresh', {'branch': 'feature'})
+            self.alice.post('/r/indianlaw/catalog/refresh', {'branch': 'feature'})
             force.assert_not_called()
-            self.assertEqual(self.alice.get('/catalog/refresh').status_code, 405)
+            self.assertEqual(self.alice.get('/r/indianlaw/catalog/refresh').status_code, 405)
 
     def test_unknown_mode_is_treated_as_explicit_selection(self):
         reply, force = self.submit({'mode': 'impact', 'tests': ['m.a'], 'branch': 'main'}, return_value = None)
@@ -330,7 +350,7 @@ class TriggerTest(ResultsMixin, TestCase):
         run = self.newest()
         self.assertEqual((run['state'], run['result']), ('finished', 'error'))
         self.assertIn('down', run['message'])
-        self.assertIn('Could not queue the run', self.alice.get('/run/%s' % run['id']).content.decode())
+        self.assertIn('Could not queue the run', self.alice.get('/r/indianlaw/run/%s' % run['id']).content.decode())
 
     def test_validation(self):
         for data in ({'mode': 'explicit', 'branch': 'main'},
@@ -356,25 +376,25 @@ class TriggerTest(ResultsMixin, TestCase):
 
     def test_the_start_page_and_starting_a_run_need_a_login(self):
         stranger = self.client_class()
-        reply = stranger.get('/new')
+        reply = stranger.get('/r/indianlaw/new')
         self.assertEqual(reply.status_code, 302)
-        self.assertIn('/login?next=/new', reply['Location'])
+        self.assertIn('/login?next=/r/indianlaw/new', reply['Location'])
         reply, force = self.submit({'mode': 'all', 'branch': 'main'}, client = stranger, return_value = None)
         self.assertIn('/login', reply['Location'])
         force.assert_not_called()
-        self.assertEqual(stranger.get('/').status_code, 200)
+        self.assertEqual(stranger.get('/r/indianlaw/').status_code, 200)
         self.assertEqual(self.store.list_runs()[1], 0)
 
     def test_a_form_without_the_right_token_is_refused(self):
         strict = self.client_class(enforce_csrf_checks = True)
         strict.force_login(get_user_model().objects.get(username = 'alice'))
         with mock.patch.object(buildbot_client, 'force_build', return_value = None) as force:
-            self.assertEqual(strict.post('/new', {'mode': 'all', 'branch': 'main'}).status_code, 403)
-            self.assertEqual(strict.post('/catalog/refresh', {'branch': 'main'}).status_code, 403)
+            self.assertEqual(strict.post('/r/indianlaw/new', {'mode': 'all', 'branch': 'main'}).status_code, 403)
+            self.assertEqual(strict.post('/r/indianlaw/catalog/refresh', {'branch': 'main'}).status_code, 403)
             force.assert_not_called()
 
     def test_new_page_says_who_the_run_will_be_recorded_as(self):
-        html = self.bob.get('/new').content.decode()
+        html = self.bob.get('/r/indianlaw/new').content.decode()
         self.assertIn('<strong>bob</strong>', html)
         self.assertNotIn('name="requested_by"', html)
 
@@ -393,10 +413,10 @@ class RequesterFilterTest(ResultsMixin, TestCase):
     def test_runs_can_be_filtered_by_who_requested_them(self):
         self.assertEqual([r['id'] for r in self.store.list_runs(requested_by = 'alice')[0]],
                          ['20260101-000004-d', '20260101-000001-a'])
-        html = self.client.get('/?by=Auto').content.decode()
+        html = self.client.get('/r/indianlaw/?by=Auto').content.decode()
         self.assertIn('20260101-000002-b', html)
         self.assertNotIn('20260101-000001-a', html)
-        page = self.client.get('/').content.decode()
+        page = self.client.get('/r/indianlaw/').content.decode()
         self.assertLess(page.index('<option value="Auto"'), page.index('<option value="alice"'))
 
 
@@ -411,15 +431,15 @@ class ShardedRunPageTest(ResultsMixin, TestCase):
         self.drop_results()
 
     def test_run_page_lists_each_shard_with_its_worker_and_state(self):
-        html = self.client.get('/run/r1').content.decode()
+        html = self.client.get('/r/indianlaw/run/r1').content.decode()
         self.assertIn('Workers', html)
         self.assertIn('w-other', html)
         self.assertIn('badge passed', html)
         self.assertIn('badge pending', html)
 
     def test_live_partial_and_api_reflect_shard_progress(self):
-        self.assertIn('other.only', self.client.get('/run/r1?partial=1').content.decode())
-        data = self.client.get('/api/run/r1').json()
+        self.assertIn('other.only', self.client.get('/r/indianlaw/run/r1?partial=1').content.decode())
+        data = self.client.get('/r/indianlaw/api/run/r1').json()
         self.assertEqual(data['counts']['passed'], 1)
         self.assertEqual(data['counts']['pending'], 7)
         self.assertEqual(data['state'], 'running')
@@ -431,7 +451,19 @@ class StopRunTest(ResultsMixin, TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             fixtures.call_with_fake('cmd_plan', self.results, self.work)
         self.client.force_login(make_user('alice'))
+        self.set_owner('alice')
         self.outcome = {'builds': [11, 12], 'requests': [], 'parent_started': True, 'errors': []}
+
+    def set_owner(self, name):
+        run = self.store.get_run('r1')
+        run['requested_by'] = name
+        self.store.save_run('r1', run)
+
+    def stop_as(self, user, **post):
+        self.client.force_login(user)
+        with mock.patch.object(buildbot_client, 'stop_run', return_value = self.outcome) as stop:
+            reply = self.client.post('/r/indianlaw/run/r1/stop', post)
+        return reply, stop
 
     def tearDown(self):
         self.drop_results()
@@ -439,14 +471,14 @@ class StopRunTest(ResultsMixin, TestCase):
     def stop(self, **patch):
         patch.setdefault('return_value', self.outcome)
         with mock.patch.object(buildbot_client, 'stop_run', **patch) as stop:
-            reply = self.client.post('/run/r1/stop')
+            reply = self.client.post('/r/indianlaw/run/r1/stop')
         return reply, stop
 
     def test_a_running_run_shows_the_stop_button_to_a_signed_in_user(self):
-        html = self.client.get('/run/r1').content.decode()
+        html = self.client.get('/r/indianlaw/run/r1').content.decode()
         self.assertIn('id="stop-run"', html)
-        self.assertIn('action="/run/r1/stop"', html)
-        self.assertNotIn('id="stop-run"', Client().get('/run/r1').content.decode())
+        self.assertIn('action="/r/indianlaw/run/r1/stop"', html)
+        self.assertNotIn('id="stop-run"', Client().get('/r/indianlaw/run/r1').content.decode())
 
     def test_stopping_asks_buildbot_and_keeps_the_run_record_for_the_runner(self):
         before = self.store.get_run('r1')
@@ -458,7 +490,7 @@ class StopRunTest(ResultsMixin, TestCase):
         self.assertEqual(self.store.get_stop('r1')['by'], 'alice')
         after = self.store.get_run('r1')
         self.assertEqual((after['state'], after['counts']), (before['state'], before['counts']))
-        html = self.client.get('/run/r1').content.decode()
+        html = self.client.get('/r/indianlaw/run/r1').content.decode()
         self.assertIn('Stop requested by alice', html)
         self.assertNotIn('id="stop-run"', html)
 
@@ -489,7 +521,7 @@ class StopRunTest(ResultsMixin, TestCase):
     def test_an_ended_run_has_no_button_and_is_not_stopped(self):
         with contextlib.redirect_stdout(io.StringIO()):
             fixtures.call_with_fake('cmd_finalize', self.results, self.work)
-        self.assertNotIn('id="stop-run"', self.client.get('/run/r1').content.decode())
+        self.assertNotIn('id="stop-run"', self.client.get('/r/indianlaw/run/r1').content.decode())
         reply, stop = self.stop()
         stop.assert_not_called()
         self.assertIn('already ended', self.client.get(reply['Location']).content.decode())
@@ -497,10 +529,62 @@ class StopRunTest(ResultsMixin, TestCase):
     def test_only_signed_in_users_can_stop_and_only_by_post(self):
         anonymous = Client()
         with mock.patch.object(buildbot_client, 'stop_run') as stop:
-            reply = anonymous.post('/run/r1/stop')
-            self.assertEqual(self.client.get('/run/r1/stop').status_code, 405)
+            reply = anonymous.post('/r/indianlaw/run/r1/stop')
+            getting = anonymous.get('/r/indianlaw/run/r1/stop')
         self.assertIn('/login', reply['Location'])
+        self.assertIn('/login', getting['Location'])
         stop.assert_not_called()
+
+    def test_somebody_who_is_not_staff_cannot_stop_another_persons_run(self):
+        self.set_owner('bob')
+        html = self.client.get('/r/indianlaw/run/r1').content.decode()
+        self.assertNotIn('id="stop-run"', html)
+        reply, stop = self.stop_as(make_user('alice2'), confirm = 'yes')
+        stop.assert_not_called()
+        self.assertIsNone(self.store.get_stop('r1'))
+        self.assertIn('Only bob or an administrator', self.client.get(reply['Location']).content.decode())
+        self.assertEqual(self.client.get('/r/indianlaw/run/r1/stop').status_code, 302)
+
+    def test_an_administrator_must_confirm_before_stopping_somebody_elses_run(self):
+        self.set_owner('bob')
+        admin = make_user('root')
+        admin.is_staff = True
+        admin.save()
+        self.client.force_login(admin)
+        page = self.client.get('/r/indianlaw/run/r1').content.decode()
+        self.assertIn('id="stop-run"', page)
+        self.assertIn('href="/r/indianlaw/run/r1/stop"', page)
+        reply, stop = self.stop_as(admin)
+        stop.assert_not_called()
+        self.assertEqual(reply.status_code, 200)
+        ask = reply.content.decode()
+        self.assertIn('started by <strong>bob</strong>', ask)
+        self.assertIn('name="confirm" value="yes"', ask)
+        self.assertIsNone(self.store.get_stop('r1'))
+        self.assertEqual(self.client.get('/r/indianlaw/run/r1/stop').status_code, 200)
+        reply, stop = self.stop_as(admin, confirm = 'yes')
+        stop.assert_called_once()
+        self.assertEqual(self.store.get_stop('r1')['by'], 'root')
+
+    def test_an_administrator_can_stop_an_automatic_run_after_confirming(self):
+        self.set_owner('Auto')
+        admin = make_user('root')
+        admin.is_superuser = True
+        admin.save()
+        reply, stop = self.stop_as(admin)
+        self.assertIn('started <strong>automatically</strong>', reply.content.decode())
+        stop.assert_not_called()
+        reply, stop = self.stop_as(admin, confirm = 'yes')
+        stop.assert_called_once()
+
+    def test_an_ordinary_user_cannot_stop_an_automatic_run(self):
+        self.set_owner('Auto')
+        reply, stop = self.stop_as(make_user('alice2'), confirm = 'yes')
+        stop.assert_not_called()
+
+    def test_a_partial_refusal_by_buildbot_is_shown(self):
+        reply, stop = self.stop(return_value = dict(self.outcome, errors = ['no role']))
+        self.assertIn('refused part of the request: no role', self.client.get(reply['Location']).content.decode())
 
     def test_finalize_names_who_stopped_the_run(self):
         self.stop()
@@ -531,7 +615,7 @@ class FakeBuildbot:
         if 'auth/login' in url:
             return self.Reply({})
         if path == 'builders':
-            return self.Reply({'builders': [{'builderid': 1, 'name': 'regression'}, {'builderid': 2, 'name': 'regression-shard'}]})
+            return self.Reply({'builders': [{'builderid': 1, 'name': 'indianlaw-run'}, {'builderid': 2, 'name': 'indianlaw-shard'}]})
         if path == 'builds':
             return self.Reply({'builds': [b for b in self.builds if not b.get('stopped')]})
         if path == 'buildrequests':
@@ -557,7 +641,7 @@ class FakeBuildbot:
 class StopRunClientTest(TestCase):
     def run_client(self, fake):
         with mock.patch.object(buildbot_client.requests, 'Session', fake.Session):
-            return buildbot_client.stop_run('http://bb.example/', 'ui', 'pw', 'r1', 'why')
+            return buildbot_client.stop_run('http://bb.example/', 'ui', 'pw', 'r1', 'why', parent_builder = 'indianlaw-run')
 
     def test_stops_the_parent_and_the_module_builds_and_cancels_queued_requests_of_that_run_only(self):
         fake = FakeBuildbot(
@@ -598,13 +682,99 @@ class RunListPagingTest(ResultsMixin, TestCase):
         self.drop_results()
 
     def test_the_run_list_offers_older_runs_and_shows_the_real_total(self):
-        html = self.client.get('/').content.decode()
+        html = self.client.get('/r/indianlaw/').content.decode()
         self.assertIn('35 runs', html)
         self.assertIn('page=2', html)
         self.assertIn('Older', html)
-        second = self.client.get('/?page=2').content.decode()
+        second = self.client.get('/r/indianlaw/?page=2').content.decode()
         self.assertIn('Newer', second)
         self.assertNotIn('page=3', second)
+
+
+class OverviewTest(ResultsMixin, TestCase):
+    """The start page, the repo page with its branches, and old addresses."""
+
+    def setUp(self):
+        self.build_results()
+        make_repo('egazette', branches = ('master',), name = 'eGazette', adapter = 'command',
+                  options = {'checks': 'smoke.ok | true'})
+        with contextlib.redirect_stdout(io.StringIO()):
+            fixtures.run_with_fake(self.results, self.work, trigger = 'push')
+        self.client.force_login(make_user('alice'))
+
+    def tearDown(self):
+        self.drop_results()
+
+    def test_the_start_page_lists_every_repo_with_its_branches(self):
+        html = self.client.get('/').content.decode()
+        self.assertIn('Indian Law', html)
+        self.assertIn('eGazette', html)
+        self.assertIn('/r/egazette/', html)
+        self.assertIn('Output comparison', html)
+        self.assertIn('Command checks', html)
+
+    def test_the_start_page_leads_with_how_things_are_and_shows_each_branch_history(self):
+        html = self.client.get('/').content.decode()
+        self.assertNotIn('class="stats', html)
+        self.assertIn('class="health-hero bad"', html)
+        self.assertIn('1 branch is failing', html)
+        self.assertIn('class="repo-card bad"', html)
+        self.assertIn('class="pip failed"', html)
+        self.assertIn('Run tests', html.split('class="repo-card bad"')[1])
+        self.assertIn('Indian Law, branch testbranch', html)
+        self.assertIn('5 tests failing', html)
+        self.assertIn('/r/indianlaw/run/r1', html.split('class="health-hero-items"')[1].split('</ul>')[0])
+
+    def test_the_start_page_says_so_when_nothing_was_tested_yet(self):
+        for path in ('indianlaw', 'egazette'):
+            RepoProfile.objects.filter(key = path).update(enabled = (path == 'egazette'))
+        html = self.client.get('/').content.decode()
+        self.assertIn('Nothing has been tested yet', html)
+        self.assertIn('class="health-hero idle"', html)
+
+    def test_a_disabled_repo_is_not_offered_but_its_results_stay_readable(self):
+        RepoProfile.objects.filter(key = 'egazette').update(enabled = False)
+        self.assertNotIn('eGazette', self.client.get('/').content.decode())
+        self.assertEqual(self.client.get('/r/egazette/').status_code, 200)
+
+    def test_each_repo_has_its_own_results(self):
+        self.assertIn('/r/indianlaw/run/r1', self.client.get('/r/indianlaw/').content.decode())
+        self.assertNotIn('/run/r1', self.client.get('/r/egazette/').content.decode())
+        self.assertEqual(self.client.get('/r/egazette/run/r1').status_code, 404)
+
+    def test_clicking_a_branch_shows_only_its_runs(self):
+        html = self.client.get('/r/indianlaw/?branch=main').content.decode()
+        self.assertNotIn('/r/indianlaw/run/r1', html.split('<tbody>')[1])
+        self.assertIn('/r/indianlaw/run/r1', self.client.get('/r/indianlaw/?branch=testbranch').content.decode().split('<tbody>')[1])
+
+    def test_the_branch_cards_come_from_the_repo_profile_in_its_order(self):
+        html = self.client.get('/r/indianlaw/').content.decode()
+        self.assertLess(html.index('?branch=main'), html.index('?branch=2026'))
+        self.assertLess(html.index('?branch=2026'), html.index('?branch=testbranch'))
+
+    def test_an_unknown_repo_is_a_404(self):
+        self.assertEqual(self.client.get('/r/nope/').status_code, 404)
+        self.assertEqual(self.client.get('/r/nope/new').status_code, 404)
+
+    def test_an_old_run_address_leads_to_the_repo_that_has_the_run(self):
+        reply = self.client.get('/run/r1')
+        self.assertEqual((reply.status_code, reply['Location']), (302, '/r/indianlaw/run/r1'))
+        self.assertEqual(self.client.get('/run/nope').status_code, 404)
+
+    def test_a_disabled_repo_cannot_start_a_run(self):
+        RepoProfile.objects.filter(key = 'indianlaw').update(enabled = False)
+        with mock.patch.object(buildbot_client, 'force_build') as force:
+            reply = self.client.post('/r/indianlaw/new', {'mode': 'all', 'branch': 'main'})
+        force.assert_not_called()
+        self.assertEqual(reply.status_code, 302)
+
+    def test_each_repo_uses_its_own_buildbot_schedulers(self):
+        self.store.save_catalog({'modules': {'m': {}}, 'tests': [{'id': 'm.a', 'module': 'm', 'name': 'a', 'output': None}]}, 'main')
+        with mock.patch.object(buildbot_client, 'force_build', return_value = None) as force:
+            self.client.post('/r/indianlaw/new', {'mode': 'all', 'branch': 'main'})
+            self.client.post('/r/egazette/new', {'mode': 'all', 'branch': 'master'})
+            self.client.post('/r/egazette/catalog/refresh', {'branch': 'master'})
+        self.assertEqual([c[0][3] for c in force.call_args_list], ['force-indianlaw-main', 'force-egazette-master', 'catalog-egazette'])
 
 
 class HelpersTest(TestCase):
@@ -616,3 +786,78 @@ class HelpersTest(TestCase):
     def test_buildbot_client_requires_a_url(self):
         with self.assertRaises(buildbot_client.BuildbotError):
             buildbot_client.force_build('', 'u', 'p', 's', {})
+
+
+class RepositoryStatusTest(ResultsMixin, TestCase):
+    """The repository page says whether a run can start, and what to do when it cannot."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.build_results()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.drop_results()
+        super().tearDownClass()
+
+    def setUp(self):
+        self.boss = self.client_class()
+        self.boss.force_login(make_user('boss', is_staff = True))
+        self.plain = self.client_class()
+        self.plain.force_login(make_user('plain'))
+
+    def page(self, client, workers):
+        with mock.patch('ciweb.runs.views.connected_workers', return_value = workers):
+            return client.get('/r/indianlaw/').content.decode()
+
+    def test_the_strip_counts_the_connected_workers(self):
+        html = self.page(self.boss, {'indianlaw-w1': {'connected': True, 'busy': 0}, 'indianlaw-w2': {'connected': True, 'busy': 1}})
+        self.assertIn('class="status-strip"', html)
+        self.assertIn('2 of 3 connected', html)
+        self.assertIn('Nightly runs', html)
+        self.assertNotIn('Up to date', html)
+        self.assertNotIn('current settings', html)
+        self.assertNotIn('class="alert', html)
+
+    def test_with_no_worker_connected_an_administrator_is_offered_the_way_out(self):
+        html = self.page(self.boss, {})
+        self.assertIn('No worker is connected', html)
+        self.assertIn('0 of 3 connected', html)
+        self.assertIn('/settings/repos/indianlaw/workers', html)
+        self.assertIn('Create and start workers', html)
+
+    def test_other_people_are_told_whom_to_ask_and_get_no_button(self):
+        html = self.page(self.plain, {})
+        self.assertIn('No worker is connected', html)
+        self.assertIn('Ask an administrator to start the workers', html)
+        self.assertNotIn('Create and start workers', html)
+
+    def test_waiting_runs_are_counted_in_the_alert(self):
+        self.store.save_run('q1', {'id': 'q1', 'state': 'queued', 'branch': 'main', 'created': '2026-11-27T10:00:00+0530', 'tests': [], 'counts': {}})
+        html = self.page(self.boss, {})
+        self.assertIn('1 run is waiting for one', html)
+
+    def test_when_buildbot_cannot_be_reached_the_page_says_so(self):
+        html = self.page(self.boss, None)
+        self.assertIn('Buildbot cannot be reached', html)
+        self.assertIn('Unknown', html)
+
+    def test_a_disabled_repository_says_so(self):
+        from ciweb.repos.models import RepoProfile
+        RepoProfile.objects.filter(key = 'indianlaw').update(enabled = False)
+        try:
+            self.assertIn('This repository is disabled', self.page(self.boss, {'indianlaw-w1': {'connected': True, 'busy': 0}}))
+        finally:
+            RepoProfile.objects.filter(key = 'indianlaw').update(enabled = True)
+
+    def test_add_branch_is_a_small_button_for_administrators_only(self):
+        html = self.page(self.boss, {'indianlaw-w1': {'connected': True, 'busy': 0}})
+        self.assertIn('data-open-dialog="add-branch-dialog"', html)
+        self.assertNotIn('add-tile', html)
+        self.assertNotIn('add-branch-dialog', self.page(self.plain, {'indianlaw-w1': {'connected': True, 'busy': 0}}))
+
+    def test_a_page_never_waits_long_for_buildbot(self):
+        with mock.patch.object(buildbot_client, 'worker_states', side_effect = buildbot_client.BuildbotError('down')) as asked:
+            self.assertIsNone(REAL_CONNECTED_WORKERS())
+        self.assertEqual(asked.call_args.kwargs.get('timeout'), 3)

@@ -1,0 +1,20 @@
+# Sourced by the scripts that change something (not run by itself). It asks for the user name and password of a website
+# superuser and checks them against the accounts of the website (the ciweb schema); the script stops unless they are right.
+# Every use is logged to $CI_RESULTS_DIR/admin-actions.log. Needs $venv and the settings file loaded first.
+#
+#   ci_login SCRIPT ACTION       ask now
+#   ci_has --yes "$@"            true when --yes is among the arguments (a dry run asks nothing)
+#
+# Without a terminal (cron), set CI_ADMIN_USER and CI_ADMIN_PASSWORD. Before the first superuser exists nothing is asked.
+ci_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+ci_login() {
+    "$venv/bin/python" "$ci_root/manage.py" ci_login --script "$1" --action "${2:-}" || exit 1
+}
+
+ci_has() {
+    local want="$1"; shift
+    local a
+    for a in "$@"; do [ "$a" = "$want" ] && return 0; done
+    return 1
+}

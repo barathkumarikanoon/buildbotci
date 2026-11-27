@@ -17,7 +17,7 @@
         <td class="muted">{{ p.joined|date:'d M H:i' }}</td>
         <td class="row-actions">
           <form method="post" action="{% url 'person_action' p.id 'approve' %}" class="inline-form">{% csrf_token %}<button type="submit" class="btn primary">Approve</button></form>
-          <form method="post" action="{% url 'person_action' p.id 'reject' %}" class="inline-form" onsubmit="return confirm('Reject and remove the sign-up of {{ p.username|escapejs }}?')">{% csrf_token %}<button type="submit">Reject</button></form>
+          <form method="post" action="{% url 'person_action' p.id 'reject' %}" class="inline-form" data-confirm-title="Reject {{ p.username }}?" data-confirm="Their sign-up is removed. They can try again later." data-confirm-ok="Yes, reject" data-confirm-tone="danger">{% csrf_token %}<button type="submit">Reject</button></form>
         </td>
       </tr>
     {% endfor %}
@@ -41,7 +41,7 @@
         <td class="muted">{% if p.last_login %}{{ p.last_login|date:'d M H:i' }}{% else %}never{% endif %}</td>
         <td class="row-actions">
           {% if p.state == 'disabled' %}<form method="post" action="{% url 'person_action' p.id 'approve' %}" class="inline-form">{% csrf_token %}<button type="submit">Enable</button></form>{% endif %}
-          {% if p.state == 'active' and p.id != me %}<form method="post" action="{% url 'person_action' p.id 'disable' %}" class="inline-form" onsubmit="return confirm('Disable {{ p.username|escapejs }}? They are signed out at once.')">{% csrf_token %}<button type="submit">Disable</button></form>{% endif %}
+          {% if p.state == 'active' and p.id != me %}<form method="post" action="{% url 'person_action' p.id 'disable' %}" class="inline-form" data-confirm-title="Disable {{ p.username }}?" data-confirm="They are signed out at once and cannot sign in until you enable the account again. Runs they started keep running." data-confirm-ok="Yes, disable" data-confirm-tone="warn">{% csrf_token %}<button type="submit">Disable</button></form>{% endif %}
           {% if p.locked %}<form method="post" action="{% url 'person_action' p.id 'unlock' %}" class="inline-form">{% csrf_token %}<button type="submit">Unlock</button></form>{% endif %}
         </td>
       </tr>
@@ -50,6 +50,5 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="muted small foot-note">More options (staff rights, editing emails) are in the <a href="/admin/accounts/user/">admin site</a>.</p>
 </section>
 {% endblock %}

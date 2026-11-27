@@ -1,0 +1,142 @@
+{% extends 'base.html' %}
+{% load ci_tags %}
+{% block title %}{{ repo.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ repo.name }}</h1>
+    <p class="sub">{% if repo.description %}{{ repo.description }} · {% endif %}{{ repo.adapter_label }}. Pick a branch to see its results; click a run to see which tests passed and why the others did not.</p>
+  </div>
+  <div class="actions">
+    {% if user.is_staff %}<a class="btn" href="{% url 'repo_edit' repo.key %}">Settings</a>{% endif %}
+    <a class="btn primary big" href="{{ new_url }}"><svg class="ico"><use href="#i-play"/></svg>Run tests{% if branch %} on {{ branch }}{% endif %}</a>
+  </div>
+</div>
+
+{% if alert %}
+<div class="alert {{ alert.level }}" role="alert">
+  <div><strong>{{ alert.title }}</strong><p>{{ alert.text }}</p></div>
+  {% if alert.action and repo.enabled %}<form method="post" action="{% url 'repo_workers' repo.key %}" class="inline-form">{% csrf_token %}<button type="submit" class="btn primary">Create and start workers</button></form>{% endif %}
+</div>
+{% endif %}
+<dl class="status-strip">
+  {% for item in status_items %}<div class="status-item {{ item.level }}"><dt><span class="dot"></span>{{ item.label }}</dt><dd>{{ item.value }}</dd><dd class="note">{{ item.note }}</dd></div>{% endfor %}
+</dl>
+
+<div class="section-title"><h2>Branches</h2><span class="muted small">Click a branch to see only its runs. Nightly runs always test everything; <em>Run tests</em> lets you choose all or some tests.</span>{% if user.is_staff %}<button type="button" class="btn sm push" data-open-dialog="add-branch-dialog"><svg class="ico sm"><use href="#i-plus"/></svg>Add branch</button>{% endif %}</div>
+<div class="cards">
+  {% for t in tabs %}
+  <div class="branch-card {{ t.badge }}{% if t.current %} current{% endif %}">
+    <div class="label">{{ t.when }}</div>
+    <div class="name">
+      <a class="stretch" href="{% if t.current %}{% url 'repo_runs' repo.key %}{% else %}{{ t.url }}{% endif %}"{% if t.current %} aria-current="page" title="Showing only this branch. Click to show all."{% endif %}>{{ t.name }}</a>
+      {% if t.badge %}<span class="badge {{ t.badge }}">{{ t.badge|label }}</span>{% endif %}
+    </div>
+    <div class="line"><span class="rev">{{ t.short }}</span><span>{{ t.ago }}</span></div>
+    {% if user.is_authenticated %}<div class="card-acts"><a class="btn sm" href="{{ t.new_url }}"><svg class="ico sm"><use href="#i-play"/></svg>Run tests</a></div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% if user.is_staff %}
+<dialog id="add-branch-dialog" class="modal" aria-labelledby="add-branch-title">
+  <form method="post" action="{% url 'branch_add' repo.key %}" class="dialog-form">
+    {% csrf_token %}
+    <h2 id="add-branch-title">Add a branch to test</h2>
+    <p class="muted">The branch has to exist on <span class="mono">origin</span>. Buildbot gets two schedulers for it: a <strong>nightly</strong> one (all tests) and an <strong>on-request</strong> one (all tests or a selection).</p>
+    <label class="field"><span>Branch name</span><input name="name" required placeholder="release/2026" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._/\-]*"></label>
+    <label class="switch"><input type="checkbox" name="scheduled" checked> Test it every night, when it has new commits</label>
+    <div class="two">
+      <label class="field"><span>Nightly hour</span><input name="cron_hour" placeholder="{{ default_time|slice:':2' }}" autocomplete="off"></label>
+      <label class="field"><span>Nightly minute</span><input name="cron_minute" placeholder="{{ default_time|slice:'3:' }}" autocomplete="off"></label>
+    </div>
+    <p class="hint">Leave the time empty to use the repository's default{% if not nightly_on %} (nightly runs are switched off for this repository, so the branch is tested on request only){% else %}: {{ default_time }}{% endif %}. Cron syntax works (<span class="mono">3,15</span>, <span class="mono">*/20</span>).</p>
+    <div class="acts"><button type="button" class="btn ghost" data-close-dialog>Cancel</button><button type="submit" class="btn primary">Add branch</button></div>
+  </form>
+</dialog>
+{% endif %}
+
+{% if busy %}
+<div class="section-title"><h2>In progress</h2><span class="muted small">{{ busy_text }}</span></div>
+<div class="live-cards">
+  {% for r in busy %}
+  <a class="live-card" href="{{ r.url }}">
+    <div class="top-line"><span class="id mono">{{ r.id }}</span><span class="badge {{ r.state }}">{{ r.state|label }}</span></div>
+    <div class="progress thin">{% for seg in r.segments %}<span class="seg {{ seg.key }}" style="width: {{ seg.width|stringformat:'f' }}%"></span>{% endfor %}</div>
+    <div class="facts-line">
+      <span><strong>{{ r.branch }}</strong></span>
+      {% if r.counts %}<span>{{ r.done }} of {{ r.counts.total }} tests done</span>{% endif %}
+      {% if r.requested_by %}<span>by {{ r.requested_by }}</span>{% endif %}
+      {% if r.current %}<span class="mono">{{ r.current }}</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="section-title"><h2>{% if branch %}History of {{ branch }}{% else %}History{% endif %}</h2><span class="muted small">{{ total }} run{{ plural }}</span></div>
+<div class="card flush">
+  <form class="toolbar" method="get">
+    <label>Branch
+      <select name="branch" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for o in branch_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Result
+      <select name="result" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for o in result_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Started by
+      <select name="by" onchange="this.form.submit()">
+        <option value="">Anyone</option>
+        {% for o in requester_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.value }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+  <div class="runs-table-wrap">
+  <table class="grid runs">
+    <thead><tr><th>Result</th><th>Run</th><th>Branch</th><th>Started by</th><th>Tests</th><th class="right">Duration</th><th class="right">Started</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr data-href="{{ r.url }}">
+        <td><span class="badge {{ r.badge }}">{{ r.badge|label }}</span></td>
+        <td class="id">
+          <a href="{{ r.url }}" class="mono">{{ r.id }}</a>
+          {% if r.reason %}<div class="why" title="{{ r.reason }}">{{ r.reason }}</div>{% endif %}
+        </td>
+        <td><span class="chip">{{ r.branch }}</span> <span class="rev">{{ r.short_rev }}</span></td>
+        <td>
+          {% if r.requested_by == 'Auto' %}<span class="chip auto">Automatic · {{ r.trigger }}</span>
+          {% elif r.requested_by %}<span class="who-cell"><span class="avatar sm">{{ r.requested_by|first|upper }}</span>{{ r.requested_by }}</span>
+          {% else %}<span class="muted">{{ r.trigger }}</span>{% endif %}
+        </td>
+        <td class="tests">
+          {% if r.counts and r.counts.total %}
+            <div class="minibar">{% for seg in r.segments %}<span class="seg {{ seg.key }}" style="width: {{ seg.width|stringformat:'f' }}%"></span>{% endfor %}</div>
+            <div class="nums">
+              <span class="n-pass">{{ r.counts.passed }} passed</span>
+              {% if r.counts.failed %}<span class="n-fail">{{ r.counts.failed }} failed</span>{% endif %}
+              {% if r.counts.error %}<span class="n-err">{{ r.counts.error }} error{{ r.counts.error|pluralize }}</span>{% endif %}
+              {% if r.counts.no_expected %}<span class="n-warn">{{ r.counts.no_expected }} no baseline</span>{% endif %}
+            </div>
+          {% else %}<span class="muted">–</span>{% endif %}
+        </td>
+        <td class="right num">{{ r.duration }}</td>
+        <td class="right muted num">{{ r.started_text }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="7" class="empty-row">No runs yet. A run appears here once a scheduled test fires or someone presses <strong>Run tests</strong>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="pager">
+  {% if newer %}<a class="btn" href="{{ newer }}">← Newer</a>{% endif %}
+  {% if older %}<a class="btn" href="{{ older }}">Older →</a>{% endif %}
+</div>
+{% endblock %}

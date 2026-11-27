@@ -79,17 +79,17 @@ class RunserverTest(SimpleTestCase):
             self.assertEqual(result, 'started')
 
     @override_settings(DEBUG = True, BRANCHES = ('main', '2026', 'buildbotci'))
-    def test_it_says_which_branches_it_offers_and_warns_about_stale_terminal_settings(self):
+    def test_it_says_which_repos_it_serves_and_warns_about_stale_terminal_settings(self):
         import io
         out = io.StringIO()
-        with mock.patch.object(envfile, 'CONFLICTS', ['REG_BRANCHES', 'REG_UI_SECRET']), \
+        with mock.patch.object(envfile, 'CONFLICTS', ['CI_BRANCHES', 'CI_UI_SECRET']), \
                 mock.patch('django.contrib.staticfiles.management.commands.runserver.Command.inner_run', return_value = None):
             command = Command(stdout = out)
             command.inner_run(addrport = '127.0.0.1:8020')
         text = out.getvalue()
-        self.assertIn('Branches offered: main, 2026, buildbotci', text)
-        self.assertIn('REG_BRANCHES, REG_UI_SECRET', text)
-        self.assertIn('unset REG_BRANCHES REG_UI_SECRET', text)
+        self.assertIn('Repository profiles:', text)
+        self.assertIn('CI_BRANCHES, CI_UI_SECRET', text)
+        self.assertIn('unset CI_BRANCHES CI_UI_SECRET', text)
 
     @override_settings(DEBUG = False)
     def test_without_debug_any_address_is_allowed(self):
@@ -100,8 +100,8 @@ class SettingsTest(SimpleTestCase):
     def settings_for(self, argv, **extra):
         code = ("import sys; sys.argv = %r\nfrom ciweb import settings\n"
                 "print(settings.DEBUG, settings.TESTING, settings.RUNSERVER)" % (argv,))
-        env = {k: v for k, v in os.environ.items() if not k.startswith(('REG_', 'BUILDBOT_'))}
-        env.update(REG_UI_SECRET = 'x', REG_UI_DB_URL = 'sqlite://', REG_RESULTS_DIR = '/tmp/results', REG_BRANCHES = 'main', REG_ENV_FILE = '/nonexistent', PYTHONPATH = os.getcwd(), **extra)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('CI_', 'BUILDBOT_'))}
+        env.update(CI_UI_SECRET = 'x', CI_UI_DB_URL = 'sqlite://', CI_RESULTS_DIR = '/tmp/results', CI_BRANCHES = 'main', CI_ENV = '/nonexistent', PYTHONPATH = os.getcwd(), **extra)
         done = subprocess.run([sys.executable, '-c', code], env = env, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
         self.assertEqual(done.returncode, 0, done.stderr.decode())
         return done.stdout.decode().split()
@@ -110,5 +110,5 @@ class SettingsTest(SimpleTestCase):
         self.assertEqual(self.settings_for(['manage.py', 'runserver']), ['True', 'False', 'True'])
         self.assertEqual(self.settings_for(['gunicorn']), ['False', 'False', 'False'])
         self.assertEqual(self.settings_for(['manage.py', 'migrate']), ['False', 'False', 'False'])
-        self.assertEqual(self.settings_for(['manage.py', 'runserver'], REG_UI_DEBUG = '0')[0], 'False')
-        self.assertEqual(self.settings_for(['gunicorn'], REG_UI_DEBUG = '1')[0], 'True')
+        self.assertEqual(self.settings_for(['manage.py', 'runserver'], CI_UI_DEBUG = '0')[0], 'False')
+        self.assertEqual(self.settings_for(['gunicorn'], CI_UI_DEBUG = '1')[0], 'True')

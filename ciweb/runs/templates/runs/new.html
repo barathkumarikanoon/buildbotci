@@ -1,14 +1,14 @@
 {% extends 'base.html' %}
 {% load static %}
-{% block title %}Run tests{% endblock %}
+{% block title %}Run {{ repo.name }} tests{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>Run regression tests</h1>
+    <h1>Run {{ repo.name }} tests</h1>
     <p class="sub">Pick what to run. The worker fetches the branch and tests its latest commit; the run is recorded under your name, <strong>{{ user.username }}</strong>.</p>
   </div>
 </div>
-{% if not configured %}<div class="flash error">REG_BUILDBOT_URL is not set, so runs cannot be queued from this page.</div>{% endif %}
+{% if repo_disabled %}<div class="flash error">{{ repo.name }} is disabled. Enable it under Repository profiles to run tests.</div>{% elif not configured %}<div class="flash error">CI_BUILDBOT_URL is not set, so runs cannot be queued from this page.</div>{% endif %}
 
 <nav class="branch-tabs" aria-label="Branch">
   {% for tab in branch_tabs %}
@@ -34,7 +34,7 @@
       <p>{{ catalog_error.message }}</p>
     </div>
     {% else %}
-    <p class="eh-lead">The modules and tests you can pick from are read from GitLab by Buildbot. Press the button, wait about a minute, then reload this page.</p>
+    <p class="eh-lead">The modules and tests you can pick from are read from the repository by Buildbot. Press the button, wait about a minute, then reload this page.</p>
     {% endif %}
 
     <ol class="steps">
@@ -46,7 +46,7 @@
     <form method="post" action="{{ refresh_url }}" class="eh-actions">
       {% csrf_token %}
       <input type="hidden" name="branch" value="{{ branch }}">
-      <button type="submit" class="btn primary big">Refresh from GitLab</button>
+      <button type="submit" class="btn primary big">Refresh test list</button>
       {% for r in ready_branches %}<a class="btn big" href="{{ r.url }}">Use {{ r.name }} instead <span class="muted">· {{ r.tests }} tests</span></a>{% endfor %}
     </form>
 
@@ -54,7 +54,7 @@
       <summary>Still empty after a minute?</summary>
       <ul>
         <li>Buildbot's master and worker must be running.</li>
-        <li>The branch must contain the <span class="mono">regression.py</span> change that lists the modules.</li>
+        <li>The branch must be in the clone's origin, and the repository profile's test suite settings must be right.</li>
       </ul>
     </details>
   </div>
@@ -87,7 +87,7 @@
           <input type="search" id="filter" placeholder="Filter modules and tests…" autocomplete="off">
           <button type="button" id="sel-visible">Select shown</button>
           <button type="button" id="sel-none">Clear</button>
-          {% if failing_count %}<button type="button" id="sel-failing" data-ids="{{ failing }}">Select {{ failing_count }} failing in {{ failing_run }}</button>{% endif %}
+          <button type="button" id="toggle-modules" data-open="0">Expand all</button>
         </div>
         <div class="module-list">
         {% for module in modules %}

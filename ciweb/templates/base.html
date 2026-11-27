@@ -3,36 +3,109 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Regressions{% endblock %} · IK Regressions</title>
+<title>{% block title %}Overview{% endblock %} · {{ ci_name }}</title>
+<script>
+// the colour theme the reader chose (or Midnight on a dark system), set before the page is drawn so it never flashes
+(function () {
+  try {
+    var theme = localStorage.getItem('ci-theme');
+    if (['paper', 'ocean', 'slate', 'midnight'].indexOf(theme) < 0) {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'midnight' : 'paper';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {}
+})();
+</script>
 <link rel="stylesheet" href="{% static 'runs/app.css' %}">
 </head>
 <body>
-{% with where=request.resolver_match.url_name %}
-<header class="top"><div class="top-in">
-  <a class="brand" href="{% url 'index' %}"><span class="logo">IK</span><span>Regressions</span></a>
-  <nav class="main">
-    <a href="{% url 'index' %}" class="navlink{% if where == 'index' or where == 'run_view' or where == 'test_view' %} active{% endif %}">Runs</a>
-  </nav>
-  {% if user.is_authenticated %}<a href="{% url 'new_run' %}" class="btn primary">Run tests</a>{% endif %}
-  <div class="who">
-    {% if user.is_authenticated %}
-      {% if user.is_staff %}<a href="{% url 'people' %}" class="people-link">People{% if pending_count %}<span class="count">{{ pending_count }}</span>{% endif %}</a>{% endif %}
-      <a class="me" href="{% url 'account' %}" title="My account"><span class="avatar">{{ user.username|first|upper }}</span><span class="me-name">{{ user.username }}</span></a>
-      <form method="post" action="{% url 'logout' %}" class="inline">{% csrf_token %}<button type="submit" class="signout">Sign out</button></form>
-    {% else %}
-      <a href="{% url 'login' %}" class="navlink">Sign in</a>
-      <a class="btn primary" href="{% url 'signup' %}">Create account</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-scales" viewBox="0 0 24 24"><path d="M12 3v18M7 21h10M5 7h14M5 7l-2.800 6.500a3 3 0 0 0 5.600 0L5 7zM19 7l-2.800 6.500a3 3 0 0 0 5.600 0L19 7z" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-repo" viewBox="0 0 24 24"><path d="M6 3v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9c0 5-7 4-12 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM20 20v-1.5a3.5 3.5 0 0 0-2.5-3.3M15.5 4.7a3.5 3.5 0 0 1 0 6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-cog" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13.5a7.7 7.7 0 0 0 0-3l1.9-1.5-2-3.4-2.3.9a7.600 7.600 0 0 0-2.6-1.5L14 2.500h-4l-.4 2.500a7.600 7.600 0 0 0-2.600 1.500l-2.300-.9-2 3.400 1.900 1.500a7.700 7.700 0 0 0 0 3l-1.900 1.500 2 3.400 2.300-.9a7.600 7.600 0 0 0 2.600 1.500l.4 2.500h4l.4-2.500a7.600 7.600 0 0 0 2.600-1.500l2.300.9 2-3.400z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.500v15l12-7.500z" fill="currentColor"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<div class="shell">
+  <aside class="side" id="side" aria-label="Main navigation">
+    <a class="brand" href="{% url 'index' %}"><span class="logo"><svg class="ico"><use href="#i-scales"/></svg></span><span class="brand-name">{{ ci_name }}</span></a>
+
+    <nav class="nav">
+      <a href="{% url 'index' %}" class="nav-item{% if nav_section == 'index' %} active{% endif %}"><svg class="ico"><use href="#i-home"/></svg>Overview</a>
+
+      <div class="nav-title">Repositories</div>
+      {% for r in nav_repos %}
+        <a href="{{ r.url }}" class="nav-item{% if r.active and not request.GET.branch %} active{% elif r.active %} open{% endif %}">
+          <span class="status {{ r.status }}{% if r.running %} running{% endif %}" title="{% if r.busy_text %}{{ r.busy_text }}{% elif r.status %}Latest result: {{ r.status }}{% else %}No runs yet{% endif %}"></span>
+          <span class="nav-text">{{ r.name }}</span>
+          {% if r.running %}<span class="live-pill">{{ r.running }} running</span>{% elif r.busy %}<span class="live-pill waiting">{{ r.busy }} waiting</span>{% endif %}
+        </a>
+        {% if r.active %}
+        <div class="nav-subs">
+          {% for b in r.branches %}<a href="{{ b.url }}" class="nav-sub{% if b.current %} active{% endif %}"><svg class="ico sm"><use href="#i-repo"/></svg>{{ b.name }}</a>{% endfor %}
+          {% if user.is_authenticated %}<a href="{{ r.new_url }}" class="nav-sub run{% if nav_section == 'new_run' %} active{% endif %}"><svg class="ico sm"><use href="#i-play"/></svg>Run tests</a>{% endif %}
+        </div>
+        {% endif %}
+      {% empty %}
+        <div class="nav-empty">No repository yet.</div>
+      {% endfor %}
+
+      {% if user.is_staff %}
+      <div class="nav-title">Administration</div>
+      <a href="{% url 'repo_list' %}" class="nav-item{% if nav_section == 'repo_list' or nav_section == 'repo_edit' or nav_section == 'repo_new' or nav_section == 'repo_delete' %} active{% endif %}"><svg class="ico"><use href="#i-cog"/></svg>Manage repositories</a>
+      <a href="{% url 'people' %}" class="nav-item{% if nav_section == 'people' %} active{% endif %}"><svg class="ico"><use href="#i-users"/></svg>People{% if pending_count %}<span class="count">{{ pending_count }}</span>{% endif %}</a>
+      {% endif %}
+    </nav>
+
+    <div class="side-foot">
+      <div class="themes" role="radiogroup" aria-label="Colour theme">
+        <span class="themes-label">Theme</span>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="paper" title="Paper: warm ivory and teal" aria-label="Paper theme"><i></i></button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="ocean" title="Ocean: cool blue with a dark blue sidebar" aria-label="Ocean theme"><i></i></button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="slate" title="Slate: neutral grey and indigo" aria-label="Slate theme"><i></i></button>
+        <button type="button" role="radio" aria-checked="false" data-theme-choice="midnight" title="Midnight: dark" aria-label="Midnight theme"><i></i></button>
+      </div>
+      {% if user.is_authenticated %}
+        <a class="me" href="{% url 'account' %}" title="My account"><span class="avatar">{{ user.username|first|upper }}</span><span class="me-name">{{ user.username }}<small>{% if user.is_staff %}Administrator{% else %}Developer{% endif %}</small></span></a>
+        <form method="post" action="{% url 'logout' %}" class="inline">{% csrf_token %}<button type="submit" class="signout" title="Sign out"><svg class="ico"><use href="#i-out"/></svg><span class="sr">Sign out</span></button></form>
+      {% else %}
+        <a class="btn primary block" href="{% url 'login' %}">Sign in</a>
+        <a class="btn ghost block" href="{% url 'signup' %}">Create account</a>
+      {% endif %}
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <div class="content">
+    <div class="mobilebar">
+      <button type="button" class="menu-btn" id="menu-btn" aria-controls="side" aria-label="Open the menu"><svg class="ico"><use href="#i-menu"/></svg></button>
+      <a class="brand" href="{% url 'index' %}"><span class="logo"><svg class="ico"><use href="#i-scales"/></svg></span><span class="brand-name">{{ ci_name }}</span></a>
+    </div>
+    {% if pending_count %}
+    <div class="banner"><div class="banner-in"><strong>{{ pending_count }} sign-up{{ pending_count|pluralize }}</strong> waiting for your approval. <a href="{% url 'people' %}">Review {{ pending_count|pluralize:"it,them" }} →</a></div></div>
     {% endif %}
+    <main>
+    {% for message in messages %}<div class="flash {{ message.tags }}" role="status">{{ message }}</div>{% endfor %}
+    {% block content %}{% endblock %}
+    </main>
   </div>
-</div></header>
-{% endwith %}
-{% if pending_count %}
-<div class="banner"><div class="banner-in"><strong>{{ pending_count }} sign-up{{ pending_count|pluralize }}</strong> waiting for your approval. <a href="{% url 'people' %}">Review {{ pending_count|pluralize:"it,them" }} →</a></div></div>
-{% endif %}
-<main>
-{% for message in messages %}<div class="flash {{ message.tags }}">{{ message }}</div>{% endfor %}
-{% block content %}{% endblock %}
-</main>
+</div>
+
+<dialog id="confirm-dialog" class="warn-dialog" aria-labelledby="confirm-title">
+  <h2 id="confirm-title">Are you sure?</h2>
+  <p id="confirm-text"></p>
+  <ul id="confirm-items" class="doomed"></ul>
+  <div class="acts">
+    <button type="button" class="btn ghost" id="confirm-no">Cancel</button>
+    <button type="button" class="btn danger" id="confirm-yes">Confirm</button>
+  </div>
+</dialog>
+
 <script src="{% static 'runs/app.js' %}"></script>
 {% block scripts %}{% endblock %}
 </body>

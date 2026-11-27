@@ -25,7 +25,7 @@ class Command(StaticRunserver):
         host = addr.rsplit(':', 1)[0] if ':' in addr else (addr if not addr.isdigit() else '')
         if settings.DEBUG and not is_loopback(host):
             raise CommandError('Debug pages show settings and code, so they must not be exposed on %s. '
-                               'Use 127.0.0.1, or set REG_UI_DEBUG=0.' % host)
+                               'Use 127.0.0.1, or set CI_UI_DEBUG=0.' % host)
         return super().handle(*args, **options)
 
     def inner_run(self, *args, **options):
@@ -34,5 +34,10 @@ class Command(StaticRunserver):
             self.stdout.write(self.style.WARNING(
                 'These settings come from your terminal and differ from the settings file: %s. '
                 'Run "unset %s" (or open a new terminal) to use the file.' % (', '.join(names), ' '.join(names))))
-        self.stdout.write('Branches offered: %s' % ', '.join(settings.BRANCHES))
+        try:
+            from ciweb.repos.models import RepoProfile
+            names = ', '.join(RepoProfile.objects.filter(enabled = True).values_list('key', flat = True)) or 'none yet (add one under Repository profiles)'
+        except Exception:
+            names = 'unknown (run migrate first)'
+        self.stdout.write('Repository profiles: %s' % names)
         return super().inner_run(*args, **options)

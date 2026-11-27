@@ -7,6 +7,8 @@ import time
 
 ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
 
+PASSED, FAILED, ERROR, NO_EXPECTED, ABORTED, PENDING, RUNNING = (
+    'passed', 'failed', 'error', 'no_expected', 'aborted', 'pending', 'running')
 RUNNING_STATES  = ('queued', 'running')
 ALL_STATUSES    = ('passed', 'failed', 'error', 'no_expected', 'aborted', 'pending')
 SHARD_FIELDS    = ('state', 'worker', 'build', 'started', 'finished', 'message')
@@ -44,6 +46,17 @@ def read_json(path, default = None):
             return json.load(handle)
     except (OSError, ValueError):
         return default
+
+
+def abort_unfinished(run, message):
+    """Close a run that no runner will finish any more: its tests that have not finished are `aborted`, the others keep
+    their result, and the run itself is `aborted` with `message`. Returns the run."""
+    for item in run.get('tests', []):
+        if item.get('status') in ('pending', 'running'):
+            item['status'] = 'aborted'
+    run.update({'state': 'aborted', 'result': 'aborted', 'finished': now(), 'current': None, 'message': message,
+                'counts': count_statuses(run.get('tests', []))})
+    return run
 
 
 class Store:
@@ -159,6 +172,23 @@ class Store:
                 runs.append(run)
         return runs, total
 
+    def latest_by_branch(self, branches, recent = 300):
+        """The newest run of each branch among the `recent` newest runs: {branch: run}. One pass, so it stays
+        cheap however many runs are stored."""
+        wanted = set(branches)
+        found  = {}
+        try:
+            names = sorted((n for n in os.listdir(self.runs_dir) if valid_id(n)), reverse = True)[:recent]
+        except OSError:
+            return found
+        for name in names:
+            if len(found) == len(wanted):
+                break
+            run = self._load(name)
+            if run and run.get('branch') in wanted and run['branch'] not in found:
+                found[run['branch']] = run
+        return found
+
     def prune(self, older_than_days, keep_latest = 50, dry_run = True):
         """Delete the folders of old, ended runs. Never touched: the newest `keep_latest` runs, runs that are queued or
         running, and the run that is the last scheduled test of a branch. Returns (names, bytes) of what was (or would be) removed."""
@@ -216,9 +246,10 @@ class Store:
         return entries
 
     def catalog_path(self, branch):
-        if not valid_id(branch):
+        # a branch such as release/1.2 is kept in a file called release__1.2
+        if not valid_id(branch.replace('/', '__')):
             raise ValueError('bad branch')
-        return os.path.join(self.root, 'catalogs', '%s.json' % branch)
+        return os.path.join(self.root, 'catalogs', '%s.json' % branch.replace('/', '__'))
 
     def catalog(self, branch):
         return read_json(self.catalog_path(branch), {'modules': {}, 'tests': []})

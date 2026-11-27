@@ -30,7 +30,7 @@ def send_verification(user):
     body  = render_to_string('accounts/verify_email.txt', {
         'user': user, 'hours': VERIFY_HOURS, 'link': public_link(reverse('verify', args = [token]))})
     try:
-        send_mail('Confirm your email for IK Regressions', body, None, [user.email])
+        send_mail('Confirm your email for %s' % settings.SITE_NAME, body, None, [user.email])
     except OSError:
         return False
     return True

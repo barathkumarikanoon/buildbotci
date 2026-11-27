@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# End the login of this terminal (see bin/login). The next script that changes something asks again.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
+cd "$here"
+exec "$venv/bin/python" manage.py ci_login --logout

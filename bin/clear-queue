@@ -10,9 +10,11 @@
 #
 # The master must be stopped:  buildbot stop ~/.buildbotci/master
 set -euo pipefail
-venv="${REG_UI_VENV:-$HOME/.buildbotci}"
-env_file="${REG_ENV_FILE:-$HOME/bb-master.env}"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+env_file="${CI_ENV:-$HOME/bb-master.env}"
 set -a; . "$env_file"; set +a
+. "$(dirname "${BASH_SOURCE[0]}")/_login"
+! ci_has --yes "$@" || ci_login clear-queue "$*"
 "$venv/bin/python" - "$@" <<'EOF'
 import os, socket, sys, time
 import sqlalchemy as sa

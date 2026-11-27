@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Look after the Buildbot master on this machine.
+#
+#   bin/master update      copy hub/buildbot/master.cfg into the master folder, check it, then start the master or,
+#                          when it already runs, reload it (running builds are kept). Stops before touching anything
+#                          running if the check fails. Use this after changing master.cfg.
+#   bin/master check       check the configuration that is installed (changes nothing)
+#   bin/master start | stop | restart | reconfig | status
+#
+# The master folder is $CI_MASTER_DIR (default $CI_UI_VENV/master = ~/.buildbotci/master). Without sudo rights over systemd
+# the commands that need it print the line to run. When the unit buildbot-master.service is installed (deploy/systemd/), the
+# master is controlled through systemd; --direct uses the buildbot command on the folder instead, --systemd forces systemd.
+# Changes to the rest of hub/ (repos.py, adapters/, buildbot/repo_config.py) need only "bin/master reconfig", no copy.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
+master="${CI_MASTER_DIR:-$venv/master}"
+bb="$venv/bin/buildbot"
+mode=auto
+args=()
+for a in "$@"; do
+  case "$a" in --direct) mode=direct ;; --systemd) mode=systemd ;; *) args+=("$a") ;; esac
+done
+action="${args[0]:-}"
+case "$action" in
+  update|check|start|stop|restart|reconfig|status) ;;
+  *) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
+
+. "$(dirname "${BASH_SOURCE[0]}")/_login"
+case "$action" in check|status) ;; *) ci_login master "$action" ;; esac
+
+[ -d "$master" ] || { echo "No master folder at $master. Create it first (README: buildbot create-master), or set CI_MASTER_DIR." >&2; exit 1; }
+
+use_systemd=0
+if [ "$mode" = systemd ] || { [ "$mode" = auto ] && systemctl cat buildbot-master.service >/dev/null 2>&1; }; then use_systemd=1; fi
+
+running() {
+  if [ "$use_systemd" = 1 ]; then systemctl is-active --quiet buildbot-master.service
+  else [ -f "$master/twistd.pid" ] && kill -0 "$(cat "$master/twistd.pid")" 2>/dev/null; fi
+}
+unit() {   # unit ACTION: run systemctl, and say what to type with sudo when it is refused
+  systemctl --no-ask-password "$1" buildbot-master.service || { echo "systemctl $1 was refused; run:  sudo systemctl $1 buildbot-master" >&2; return 1; }
+}
+do_start()    { if [ "$use_systemd" = 1 ]; then unit start; else "$bb" start "$master"; fi; }
+do_stop()     { if [ "$use_systemd" = 1 ]; then unit stop; else "$bb" stop "$master"; fi; }
+do_reconfig() { if [ "$use_systemd" = 1 ]; then unit reload; else "$bb" reconfig "$master"; fi; }
+# A master folder made by `buildbot create-master` holds only master.cfg.sample: put ours there, so start, restart and check work.
+ensure_config() {
+  if [ ! -f "$master/master.cfg" ]; then cp "$here/hub/buildbot/master.cfg" "$master/master.cfg"; echo "installed master.cfg (the master folder had none)"; fi
+}
+do_check()    { ensure_config; "$bb" checkconfig "$master"; }
+
+case "$action" in
+  check)    do_check ;;
+  status)   if running; then echo "master is running ($master)"; else echo "master is stopped ($master)"; exit 3; fi ;;
+  start)    if running; then echo "master is already running"; else do_check && do_start; fi ;;
+  stop)     if running; then do_stop; else echo "master is already stopped"; fi ;;
+  reconfig) running || { echo "master is not running; use: bin/master start" >&2; exit 1; }; do_check && do_reconfig ;;
+  restart)  do_check; if running; then do_stop; fi; do_start ;;
+  update)
+    if cmp -s "$here/hub/buildbot/master.cfg" "$master/master.cfg"; then echo "master.cfg is unchanged"; else cp "$here/hub/buildbot/master.cfg" "$master/master.cfg"; echo "copied master.cfg"; fi
+    do_check
+    if running; then do_reconfig; echo "master reloaded; running builds were kept"; else do_start; echo "master started"; fi ;;
+esac

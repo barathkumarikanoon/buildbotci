@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-import runner
+from hub import diffing, planning, repos
+from hub.adapters.comparison import OutputComparisonAdapter
 from hub.store import Store
 from hub.tests import fixtures
 
@@ -13,23 +14,23 @@ from hub.tests import fixtures
 class ExpandPathTest(unittest.TestCase):
     def test_tilde_home_variable_and_absolute_paths_all_resolve(self):
         with mock.patch.dict(os.environ, {'HOME': '/home/someone'}):
-            self.assertEqual(runner.expand_path('~/indianlaw'), '/home/someone/indianlaw')
-            self.assertEqual(runner.expand_path('$HOME/indianlaw'), '/home/someone/indianlaw')
-            self.assertEqual(runner.expand_path('/srv/ci/indianlaw'), '/srv/ci/indianlaw')
+            self.assertEqual(repos.expand_path('~/indianlaw'), '/home/someone/indianlaw')
+            self.assertEqual(repos.expand_path('$HOME/indianlaw'), '/home/someone/indianlaw')
+            self.assertEqual(repos.expand_path('/srv/ci/indianlaw'), '/srv/ci/indianlaw')
 
 
 class AssignShardsTest(unittest.TestCase):
     def test_one_module_per_shard(self):
-        shards = runner.assign_shards(['a', 'b', 'c'], 32)
+        shards = planning.assign_shards(['a', 'b', 'c'], 32)
         self.assertEqual([s['modules'] for s in shards], [['a'], ['b'], ['c']])
         self.assertEqual([s['index'] for s in shards], [1, 2, 3])
 
     def test_modules_are_grouped_beyond_the_limit(self):
-        shards = runner.assign_shards(['a', 'b', 'c', 'd', 'e'], 2)
+        shards = planning.assign_shards(['a', 'b', 'c', 'd', 'e'], 2)
         self.assertEqual([s['modules'] for s in shards], [['a', 'c', 'e'], ['b', 'd']])
 
     def test_nothing_selected_gives_no_shards(self):
-        self.assertEqual(runner.assign_shards([], 32), [])
+        self.assertEqual(planning.assign_shards([], 32), [])
 
 
 class HistogramDiffTest(unittest.TestCase):
@@ -44,7 +45,7 @@ class HistogramDiffTest(unittest.TestCase):
         return path
 
     def diff(self, old, new):
-        return runner.histogram_diff(self.write('expected', old), self.write('actual', new),
+        return diffing.histogram_diff(self.write('expected', old), self.write('actual', new),
                                      ('expected/x', 'actual/x'), self.tmp.name)
 
     def test_header_uses_the_labels_and_the_hunks_parse(self):
@@ -70,7 +71,7 @@ class HistogramDiffTest(unittest.TestCase):
         before = os.getcwd()
         os.chdir(work)
         try:
-            text = runner.histogram_diff(os.path.join('expected', 'x'), os.path.join(scratch, 'actual'),
+            text = diffing.histogram_diff(os.path.join('expected', 'x'), os.path.join(scratch, 'actual'),
                                          ('expected/x', 'actual/x'), scratch)
         finally:
             os.chdir(before)
@@ -78,7 +79,7 @@ class HistogramDiffTest(unittest.TestCase):
 
     def test_identical_files_and_missing_git_give_none(self):
         self.assertIsNone(self.diff('same\n', 'same\n'))
-        with mock.patch('runner.subprocess.run', side_effect = FileNotFoundError):
+        with mock.patch('hub.diffing.subprocess.run', side_effect = FileNotFoundError):
             self.assertIsNone(self.diff('a\n', 'b\n'))
 
     def test_binary_looking_text_and_missing_final_newline(self):
@@ -107,7 +108,7 @@ class AnalyzeFailureTest(unittest.TestCase):
                                                 'start': [['^={10,}$', '^docid:', '^RELURL:']]}])[0]
 
     def test_a_record_rule_cuts_the_hunks_labels_them_and_keeps_the_header_lines(self):
-        text, stats, summary = runner.analyze_failure(self.raw, self.old_path, [], self.rule)
+        text, stats, summary = diffing.analyze_failure(self.raw, self.old_path, [], self.rule)
         self.assertTrue(text.startswith('--- expected/x\n+++ actual/x\n@@ '))
         self.assertEqual(len(self.diffparse.parse_unified(self.raw)), 1)
         pieces = self.diffparse.parse_unified(text)
@@ -117,14 +118,14 @@ class AnalyzeFailureTest(unittest.TestCase):
 
     def test_without_a_rule_the_markers_label_the_hunks_and_nothing_is_cut(self):
         markers = self.diffparse.compile_markers(['^RELURL:\\s*(.+)$'])
-        text, stats, summary = runner.analyze_failure(self.raw, self.old_path, markers, None)
+        text, stats, summary = diffing.analyze_failure(self.raw, self.old_path, markers, None)
         self.assertEqual(stats['hunks'], 1)
         self.assertEqual(self.diffparse.parse_unified(text)[0]['rows'], self.diffparse.parse_unified(self.raw)[0]['rows'])
 
     def test_a_rule_that_finds_no_records_falls_back_to_the_markers(self):
         rule = self.diffparse.compile_formats([{'outputs': ['x'], 'start': [['^NEVER$']]}])[0]
         markers = self.diffparse.compile_markers(['^RELURL:\\s*(.+)$'])
-        text, stats, summary = runner.analyze_failure(self.raw, self.old_path, markers, rule)
+        text, stats, summary = diffing.analyze_failure(self.raw, self.old_path, markers, rule)
         self.assertEqual(stats['hunks'], 1)
         self.assertEqual(summary[0]['label'], 'one')
 
@@ -138,7 +139,7 @@ class HistogramHeaderTest(unittest.TestCase):
             handle.write('RELURL: some/doc\n' + 'filler\n' * 20 + 'old\n')
         with open(new, 'w') as handle:
             handle.write('RELURL: some/doc\n' + 'filler\n' * 20 + 'new\n')
-        text = runner.histogram_diff(old, new, ('e', 'a'), tmp.name)
+        text = diffing.histogram_diff(old, new, ('e', 'a'), tmp.name)
         self.assertRegex(text, r'(?m)^@@ -\d+,\d+ \+\d+,\d+ @@$')
 
 
@@ -149,7 +150,7 @@ class ShardedRunTest(unittest.TestCase):
         self.results = os.path.join(self.tmp.name, 'results')
         os.makedirs(self.work)
         fixtures.write_expected(self.work)
-        self.store = Store(self.results)
+        self.store = Store(os.path.join(self.results, fixtures.REPO_KEY))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -188,8 +189,10 @@ class ShardedRunTest(unittest.TestCase):
 
     def test_a_branch_without_the_regression_hook_is_explained_in_plain_words(self):
         import types
-        with self.assertRaises(RuntimeError) as caught:
-            runner.build_catalog(types.SimpleNamespace())
+        adapter = OutputComparisonAdapter(fixtures.repo_config(self.tmp.name), self.tmp.name, {})
+        with mock.patch.object(OutputComparisonAdapter, 'import_regression', lambda self: types.SimpleNamespace()):
+            with self.assertRaises(RuntimeError) as caught:
+                adapter.catalog()
         self.assertIn('regression.MODULES', str(caught.exception))
         self.assertIn('not been merged', str(caught.exception))
 
@@ -206,16 +209,16 @@ class ShardedRunTest(unittest.TestCase):
 
     def test_a_failed_test_says_where_its_complete_files_are_in_the_build_log(self):
         self.plan()
-        block = self.block_of(self.shard_log(REG_UI_URL = 'http://ui.example/'), 'fake.differs')
+        block = self.block_of(self.shard_log(CI_UI_URL = 'http://ui.example/'), 'fake.differs')
         self.assertRegex(block, r'full diff:\s+\S+/tests/fake\.differs/diff\.txt\s+\(\d+ B\)')
         self.assertRegex(block, r'expected:\s+\S+/tests/fake\.differs/expected\s+\(\d+ B\)')
         self.assertRegex(block, r'actual:\s+\S+/tests/fake\.differs/actual\s+\(\d+ B\)')
-        self.assertIn('open it:  http://ui.example/run/r1/test/fake.differs', block)
-        self.assertIn('download the full diff:  http://ui.example/run/r1/test/fake.differs/raw/diff?download=1', block)
+        self.assertIn('open it:  http://ui.example/r/indianlaw/run/r1/test/fake.differs', block)
+        self.assertIn('download the full diff:  http://ui.example/r/indianlaw/run/r1/test/fake.differs/raw/diff?download=1', block)
 
     def test_without_a_web_address_only_the_paths_are_printed(self):
         self.plan()
-        block = self.block_of(self.shard_log(REG_UI_URL = ''), 'fake.differs')
+        block = self.block_of(self.shard_log(CI_UI_URL = ''), 'fake.differs')
         self.assertIn('full diff:', block)
         self.assertNotIn('open it:', block)
 
@@ -226,7 +229,7 @@ class ShardedRunTest(unittest.TestCase):
         self.assertNotIn('full diff:', self.block_of(lines, 'fake.truthy'))
 
     def test_sizes_are_written_in_plain_units(self):
-        self.assertEqual([runner.human_size(n) for n in (0, 999, 1024, 5 * 1024 * 1024, 17731988)], ['0 B', '999 B', '1.0 KB', '5.0 MB', '16.9 MB'])
+        self.assertEqual([diffing.human_size(n) for n in (0, 999, 1024, 5 * 1024 * 1024, 17731988)], ['0 B', '999 B', '1.0 KB', '5.0 MB', '16.9 MB'])
 
     def test_plan_rejects_unknown_tests(self):
         code, out = self.call('cmd_plan', all = False, tests = 'nosuch')
@@ -252,10 +255,10 @@ class ShardedRunTest(unittest.TestCase):
 
     def test_shards_do_not_touch_the_run_record(self):
         self.plan()
-        before = open(os.path.join(self.results, 'runs', 'r1', 'run.json')).read()
+        before = open(os.path.join(self.results, fixtures.REPO_KEY, 'runs', 'r1', 'run.json')).read()
         self.call('cmd_shard', shard_index = 1)
         self.call('cmd_shard', shard_index = 2)
-        after = open(os.path.join(self.results, 'runs', 'r1', 'run.json')).read()
+        after = open(os.path.join(self.results, fixtures.REPO_KEY, 'runs', 'r1', 'run.json')).read()
         self.assertEqual(before, after)
 
     def test_full_flow_matches_a_single_process_run(self):
@@ -271,7 +274,7 @@ class ShardedRunTest(unittest.TestCase):
         single = os.path.join(self.tmp.name, 'single')
         with contextlib.redirect_stdout(io.StringIO()):
             fixtures.run_with_fake(single, self.work, run_id = 'solo')
-        solo = Store(single).get_run('solo')
+        solo = Store(os.path.join(single, fixtures.REPO_KEY)).get_run('solo')
         self.assertEqual({t['id']: t['status'] for t in run['tests']},
                          {t['id']: t['status'] for t in solo['tests']})
         self.assertEqual(run['counts'], solo['counts'])
@@ -321,13 +324,13 @@ class ShardedRunTest(unittest.TestCase):
         empty = {'mode': 'impact', 'specs': [], 'changed_files': ['README.md'], 'base': 'abc',
                  'reasons': {}, 'unmapped': [], 'ignored': ['README.md'], 'full': False,
                  'unmatched_specs': [], 'tests': []}
-        with mock.patch.object(runner, 'make_plan', return_value = empty):
+        with mock.patch.object(planning, 'make_plan', return_value = empty):
             out = self.plan(all = False, tests = '')
         self.assertIn('SHARDS: 0', out)
         self.assertEqual(self.call('cmd_finalize')[0], 0)
         run = self.store.get_run('r1')
         self.assertEqual((run['state'], run['result']), ('finished', 'passed'))
-        self.assertIn('No regression tests', run['message'])
+        self.assertIn('No tests are impacted', run['message'])
 
     def test_plan_that_cannot_import_the_tests_closes_the_run(self):
         code, out = self.call('cmd_plan', broken_import = True)
@@ -356,7 +359,7 @@ class ShardedRunTest(unittest.TestCase):
     def test_console_log_is_shared_and_prefixed(self):
         self.plan(all = False, tests = 'other')
         self.call('cmd_shard', shard_index = 1)
-        with open(os.path.join(self.results, 'runs', 'r1', 'runner.log')) as handle:
+        with open(os.path.join(self.results, fixtures.REPO_KEY, 'runs', 'r1', 'runner.log')) as handle:
             text = handle.read()
         self.assertIn('[shard 1] [1/1] other.only', text)
 

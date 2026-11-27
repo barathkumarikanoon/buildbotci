@@ -2,7 +2,7 @@
 {% load ci_tags %}
 {% block title %}{{ item.id }}{% endblock %}
 {% block content %}
-<div class="crumbs"><a href="{{ index_url }}">Runs</a> / <a href="{{ run_url }}">{{ run.id }}</a> / {{ item.id }}</div>
+<div class="crumbs"><a href="{% url 'index' %}">Overview</a> / <a href="{{ index_url }}">{{ repo.name }}</a> / <a href="{{ run_url }}">{{ run.id }}</a> / {{ item.id }}</div>
 
 <section class="hero {{ item.status }}" id="hero">
   <div>
@@ -15,9 +15,9 @@
 {% if result %}
 <div class="card wide">
   <dl class="meta">
-    {% if result.output %}<div><dt>Expected file</dt><dd class="mono">expected/{{ result.output }}</dd></div>{% endif %}
-    <div><dt>Expected size</dt><dd>{{ expected_size }}</dd></div>
-    <div><dt>Actual size</dt><dd>{{ actual_size }}</dd></div>
+    {% if result.output %}<div><dt>Expected file</dt><dd class="mono">{{ result.output }}</dd></div>{% endif %}
+    {% if compares_output %}<div><dt>Expected size</dt><dd>{{ expected_size }}</dd></div>{% endif %}
+    {% if files.actual %}<div><dt>Output size</dt><dd>{{ actual_size }}</dd></div>{% endif %}
     <div><dt>Duration</dt><dd>{{ duration }}</dd></div>
   </dl>
 </div>
@@ -25,7 +25,7 @@
 
 <div class="tabs" role="tablist">
   <a href="#analysis" data-tab="analysis" class="tab active">Analysis</a>
-  {% if files.diff %}<a href="#diff" data-tab="diff" class="tab">Diff <span class="pill">{{ group_total }}</span></a>{% endif %}
+  {% if files.diff %}<a href="#diff" data-tab="diff" class="tab">Differences <span class="pill">{{ group_total }}</span></a>{% endif %}
   {% if files.expected %}<a href="#expected" data-tab="expected" class="tab" data-src="{{ raw.expected }}">Expected</a>{% endif %}
   {% if files.actual %}<a href="#actual" data-tab="actual" class="tab" data-src="{{ raw.actual }}">Actual</a>{% endif %}
   <a href="#log" data-tab="log" class="tab" data-src="{{ raw.log }}" data-live-tail="{{ tail_url }}" data-live="{% if running %}1{% else %}0{% endif %}">Log</a>
@@ -35,7 +35,7 @@
   {% if show_files %}
   <div class="card wide files">
     <h2>Full files</h2>
-    <p class="muted small">The complete files, not just the first page of the diff. Download them to read or search them locally.</p>
+    <p class="muted small">The complete files, not just the first page of the differences. Download them to read or search them locally.</p>
     <div class="file-rows">
       {% for f in full_files %}
       <div class="file-row">
@@ -82,7 +82,7 @@
           </tbody>
         </table>
         </details>
-        {% if more_hunks %}<p class="muted small foot">Showing the first {{ summary_count }} documents; the Diff tab has all of them.</p>{% endif %}
+        {% if more_hunks %}<p class="muted small foot">Showing the first {{ summary_count }} documents; the Differences tab has all of them.</p>{% endif %}
         {% endif %}
       {% endif %}
 
@@ -104,21 +104,20 @@
       {% endif %}
 
       {% if item.status == 'no_expected' %}
-        <p>The test ran, but there is no baseline to compare with. If the Actual output is correct, create the baseline and commit it:</p>
-        <pre class="code">cd regressions
-python regression.py -P {{ profile }} -m {{ result.module }} -t {{ result.name }} -p
-git add expected/{{ result.output }}</pre>
+        <p>The test ran, but there is no baseline to compare with. If the Actual output is correct, create the baseline and commit it.</p>
+        {% if baseline %}<pre class="code">{{ baseline.0 }}</pre><p class="muted small">{{ baseline.1 }}</p>{% endif %}
       {% endif %}
     </div>
   {% else %}
     <div class="flash error">No result was recorded for this test{% if run_ended %} (the run ended before it started){% endif %}.</div>
   {% endif %}
 
+  {% if reproduce %}
   <div class="card wide">
     <h2>Reproduce on your machine</h2>
-    <pre class="code">cd &lt;the CI repository&gt;
-python runner.py --repo-dir &lt;your indianlaw checkout&gt; run --tests {{ item.id }} --profile {{ profile }} --branch {{ run.branch }}</pre>
+    <pre class="code">{{ reproduce }}</pre>
   </div>
+  {% endif %}
 
   {% if reasons %}
   <div class="card wide">
@@ -143,7 +142,7 @@ python runner.py --repo-dir &lt;your indianlaw checkout&gt; run --tests {{ item.
   <div class="filters">
     <a class="btn{% if split %} primary{% endif %}" href="{{ split_url }}">Side by side</a>
     <a class="btn{% if not split %} primary{% endif %}" href="{{ unified_url }}">Unified</a>
-    <a class="btn" href="{{ raw.diff }}?download=1">Download full diff</a>
+    <a class="btn" href="{{ raw.diff }}?download=1">Download all differences</a>
     <span class="muted small">left = expected, right = actual · page {{ page }} of {{ pages }}</span>
   </div>
   {% for h in hunks %}

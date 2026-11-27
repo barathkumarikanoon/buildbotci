@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Log in once as a website superuser, then run the scripts that change something without being asked again.
+#
+#   bin/login          ask for the user name and password now (or say you are already logged in)
+#   bin/login --who    say who is logged in in this terminal
+#   bin/logout         end the login
+#
+# The login is for this terminal only. It ends after 30 minutes of not using it (CI_LOGIN_MINUTES; 0 asks every time), after
+# 8 hours, when the terminal is closed, and when the account is disabled, loses its superuser right or changes its password.
+# A script that changes something logs you in by itself if you have not done it: this command only does it first.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
+cd "$here"
+case "${1:-}" in
+  --who) exec "$venv/bin/python" manage.py ci_login --who ;;
+  "")    exec "$venv/bin/python" manage.py ci_login --login --script login ;;
+  *)     sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

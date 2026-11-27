@@ -81,16 +81,13 @@
     boxes.forEach(function (b) { b.checked = false; });
     refresh();
   });
-  var failing = document.getElementById('sel-failing');
-  if (failing) {
-    failing.addEventListener('click', function () {
-      var ids = failing.dataset.ids.split(' ');
-      boxes.forEach(function (b) { b.checked = ids.indexOf(b.value) >= 0; });
-      Array.prototype.forEach.call(form.querySelectorAll('details.module'), function (d) {
-        d.open = Array.prototype.some.call(d.querySelectorAll('input[name="tests"]'), function (b) { return b.checked; });
-      });
-      setMode('explicit');
-      refresh();
+  var toggle = document.getElementById('toggle-modules');
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      var open = toggle.dataset.open !== '1';
+      Array.prototype.forEach.call(form.querySelectorAll('details.module'), function (d) { if (d.style.display !== 'none') { d.open = open; } });
+      toggle.dataset.open = open ? '1' : '0';
+      toggle.textContent = open ? 'Collapse all' : 'Expand all';
     });
   }
   refresh();

@@ -30,23 +30,24 @@ def required(name, test_value = ''):
     raise ImproperlyConfigured('%s is not set. Put it in the settings file (~/bb-master.env).' % name)
 
 
-SECRET_KEY = env('REG_UI_SECRET')
+SECRET_KEY = env('CI_UI_SECRET')
 if not SECRET_KEY:
     if not TESTING:
-        raise ImproperlyConfigured('REG_UI_SECRET must be set to a long random value (it signs the login cookies)')
+        raise ImproperlyConfigured('CI_UI_SECRET must be set to a long random value (it signs the login cookies)')
     SECRET_KEY = 'test-only-secret-key-that-is-never-used-in-production'
 
-DEBUG      = env('REG_UI_DEBUG', '1' if RUNSERVER else '0') == '1'
-PUBLIC_URL = env('REG_UI_URL')
+DEBUG      = env('CI_UI_DEBUG', '1' if RUNSERVER else '0') == '1'
+PUBLIC_URL = env('CI_UI_URL')
 _public    = urlsplit(PUBLIC_URL)
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]'] + ([_public.hostname] if _public.hostname else []) \
-    + [h.strip() for h in env('REG_UI_ALLOWED_HOSTS').split(',') if h.strip()]
+    + [h.strip() for h in env('CI_UI_ALLOWED_HOSTS').split(',') if h.strip()]
 CSRF_TRUSTED_ORIGINS = ['%s://%s' % (_public.scheme, _public.netloc)] if _public.scheme and _public.netloc else []
 
 INSTALLED_APPS = [
     'ciweb',
     'ciweb.accounts',
+    'ciweb.repos',
     'ciweb.runs',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -79,13 +80,14 @@ TEMPLATES = [{
         'django.contrib.auth.context_processors.auth',
         'django.contrib.messages.context_processors.messages',
         'ciweb.accounts.context.pending',
+        'ciweb.runs.context.site',
     ]},
 }]
 
-DB_URL = env('REG_UI_DB_URL') or env('BUILDBOT_DB_URL') or ('sqlite://' if TESTING else '')
-_default_db = database_from_url(DB_URL, env('REG_UI_DB_SCHEMA'))
+DB_URL = env('CI_UI_DB_URL') or env('BUILDBOT_DB_URL') or ('sqlite://' if TESTING else '')
+_default_db = database_from_url(DB_URL, env('CI_UI_DB_SCHEMA'))
 if _default_db is None:
-    raise ImproperlyConfigured('Set REG_UI_DB_URL (or BUILDBOT_DB_URL) to the database that holds the accounts')
+    raise ImproperlyConfigured('Set CI_UI_DB_URL (or BUILDBOT_DB_URL) to the database that holds the accounts')
 if not TESTING:
     _default_db.setdefault('CONN_MAX_AGE', 60)
     _default_db.setdefault('CONN_HEALTH_CHECKS', True)
@@ -112,7 +114,7 @@ LOGIN_REDIRECT_URL  = '/'
 LOGOUT_REDIRECT_URL = '/'
 PASSWORD_RESET_TIMEOUT = 3600
 
-_secure_cookies = env('REG_UI_SECURE_COOKIES') == '1'
+_secure_cookies = env('CI_UI_SECURE_COOKIES') == '1'
 SESSION_COOKIE_AGE      = 12 * 3600
 SESSION_COOKIE_SECURE   = _secure_cookies
 SESSION_COOKIE_HTTPONLY = True
@@ -121,10 +123,10 @@ CSRF_COOKIE_SECURE      = _secure_cookies
 CSRF_COOKIE_SAMESITE    = 'Lax'
 SECURE_REFERRER_POLICY  = 'same-origin'
 SECURE_CONTENT_TYPE_NOSNIFF = True
-if env('REG_UI_BEHIND_PROXY') == '1':
+if env('CI_UI_BEHIND_PROXY') == '1':
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_HSTS_SECONDS = int(env('REG_UI_HSTS_SECONDS', '0'))
-SECURE_SSL_REDIRECT = env('REG_UI_SSL_REDIRECT') == '1'
+SECURE_HSTS_SECONDS = int(env('CI_UI_HSTS_SECONDS', '0'))
+SECURE_SSL_REDIRECT = env('CI_UI_SSL_REDIRECT') == '1'
 X_FRAME_OPTIONS = 'DENY'
 
 USE_TZ    = True
@@ -137,7 +139,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # does not exist, read the files from the apps instead so that the pages never lose their style sheet.
 WHITENOISE_USE_FINDERS = DEBUG or not STATIC_ROOT.exists()
 
-LOG_LEVEL = env('REG_UI_LOG_LEVEL', 'INFO').upper()
+LOG_LEVEL = env('CI_UI_LOG_LEVEL', 'INFO').upper()
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -155,24 +157,28 @@ CSRF_FAILURE_VIEW = 'ciweb.runs.views.csrf_failed'
 
 MESSAGE_TAGS = {message_levels.SUCCESS: 'ok'}
 
-EMAIL_HOST          = env('REG_SMTP_HOST')
-EMAIL_PORT          = int(env('REG_SMTP_PORT', '587'))
-EMAIL_HOST_USER     = env('REG_SMTP_USER')
-EMAIL_HOST_PASSWORD = env('REG_SMTP_PASSWORD')
-_security           = env('REG_SMTP_SECURITY', 'starttls').lower()
+EMAIL_HOST          = env('CI_SMTP_HOST')
+EMAIL_PORT          = int(env('CI_SMTP_PORT', '587'))
+EMAIL_HOST_USER     = env('CI_SMTP_USER')
+EMAIL_HOST_PASSWORD = env('CI_SMTP_PASSWORD')
+_security           = env('CI_SMTP_SECURITY', 'starttls').lower()
 EMAIL_USE_TLS       = _security == 'starttls'
 EMAIL_USE_SSL       = _security == 'ssl'
 EMAIL_TIMEOUT       = 20
-DEFAULT_FROM_EMAIL  = env('REG_SMTP_FROM')
+DEFAULT_FROM_EMAIL  = env('CI_SMTP_FROM')
 MAIL_CONFIGURED     = bool(EMAIL_HOST and DEFAULT_FROM_EMAIL and PUBLIC_URL)
 EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend' if MAIL_CONFIGURED else 'django.core.mail.backends.dummy.EmailBackend'
 
-RESULTS_DIR       = os.path.expanduser(os.path.expandvars(required('REG_RESULTS_DIR', '~/regression-results')))
-BUILDBOT_URL      = env('REG_BUILDBOT_URL')
-BUILDBOT_USER     = env('REG_BUILDBOT_USER')
-BUILDBOT_PASS     = env('REG_BUILDBOT_PASSWORD') or env('BUILDBOT_UI_PASSWORD')   # the same account as the master's regression-ui login
-FORCE_SCHEDULER   = env('REG_BUILDBOT_FORCE_SCHEDULER', 'force-regression')
-CATALOG_SCHEDULER = env('REG_BUILDBOT_CATALOG_SCHEDULER', 'force-catalog')
-BRANCHES          = tuple(b.strip() for b in required('REG_BRANCHES', 'main,2026').split(',') if b.strip())
-SIGNUP_DOMAINS    = tuple(d.strip().lower() for d in env('REG_SIGNUP_DOMAINS').split(',') if d.strip())
+SITE_NAME         = env('CI_UI_SITE_NAME', 'Indian Kanoon CI')
+RESULTS_DIR       = os.path.expanduser(os.path.expandvars(required('CI_RESULTS_DIR', '~/ci-results')))
+# The repo profiles are written here for the Buildbot master and the runners (hub/repos.py). The unit tests do not write it.
+PROFILES_FILE     = '' if TESTING else os.path.expanduser(os.path.expandvars(env('CI_PROFILES_FILE'))) or os.path.join(RESULTS_DIR, 'profiles.json')
+WORKERS_DIR       = os.path.expanduser(os.path.expandvars(env('CI_WORKERS_DIR')))
+AUTO_START_WORKERS = env('CI_AUTO_START_WORKERS', '1') != '0'        # start a repository's workers on this machine when it is saved, or when a person presses the button
+SCRIPT_LOGIN_MINUTES = int(env('CI_LOGIN_MINUTES', '30') or '30')                      # how long one login for the bin/ scripts lasts when unused; 0 = ask every time
+AUTO_CREATE_WORKERS = env('CI_AUTO_CREATE_WORKERS', '1') != '0'      # make a repository's worker folders on this machine when it is saved
+BUILDBOT_URL      = env('CI_BUILDBOT_URL')
+BUILDBOT_USER     = env('CI_BUILDBOT_USER')
+BUILDBOT_PASS     = env('CI_BUILDBOT_PASSWORD') or env('BUILDBOT_UI_PASSWORD')   # the same account as the master's UI login
+SIGNUP_DOMAINS    = tuple(d.strip().lower() for d in env('CI_SIGNUP_DOMAINS').split(',') if d.strip())
 AUTO_NAME         = 'Auto'

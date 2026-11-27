@@ -1,4 +1,3 @@
-import argparse
 import contextlib
 import io
 import os
@@ -6,8 +5,9 @@ import subprocess
 import tempfile
 import unittest
 
-import runner
-from hub import profile
+from hub import dotenv_merge as profile
+from hub.commands import ops
+from hub.tests import fixtures
 
 COMMITTED = """# settings of a developer
 DATADIR=/home/someone/indianlaw_data
@@ -55,27 +55,30 @@ class MergeTest(unittest.TestCase):
         self.assertEqual((merged, applied), (COMMITTED, []))
 
 
-class ProfileCommandTest(unittest.TestCase):
+class PrepareCommandTest(unittest.TestCase):
+    """`runner.py prepare` of an indianlaw repo profile: merging the machine's own settings file into the checkout."""
+
     def setUp(self):
         self.tmp  = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.tree = os.path.join(self.tmp.name, 'indianlaw')
         os.makedirs(self.tree)
         subprocess.run(['git', '-C', self.tree, 'init', '-q'], check = True)
         with open(os.path.join(self.tree, '.env.local'), 'w') as handle:
             handle.write(COMMITTED)
-        self.saved = runner.REPO
+        self.results = os.path.join(self.tmp.name, 'results')
 
-    def tearDown(self):
-        runner.REPO = self.saved
-        self.tmp.cleanup()
-
-    def run_command(self, text, name = 'mine.env'):
-        path = os.path.join(self.tmp.name, name)
-        with open(path, 'w') as handle:
-            handle.write(text)
+    def run_command(self, text, name = 'mine.env', env_profile = 'local', file = None):
+        path = file or os.path.join(self.tmp.name, name)
+        if file is None:
+            with open(path, 'w') as handle:
+                handle.write(text)
+        config = fixtures.repo_config(self.tmp.name, repo_dir = self.tree, options = {'env_profile': env_profile, 'profile_file': path})
+        fixtures.write_profiles(self.results, config)
+        args = fixtures.run_args(self.results, tree = self.tree)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = runner.cmd_profile(argparse.Namespace(repo_dir = self.tree, file = path, profile = 'local'))
+            code = ops.cmd_prepare(args)
         return code, out.getvalue()
 
     def test_it_merges_into_the_checkout_and_reports_names_only(self):
@@ -92,17 +95,19 @@ class ProfileCommandTest(unittest.TestCase):
 
     def test_a_missing_file_is_reported_clearly(self):
         with self.assertRaises(SystemExit) as caught:
-            runner.cmd_profile(argparse.Namespace(repo_dir = self.tree, file = '/nonexistent/mine.env', profile = 'local'))
-        self.assertIn('Profile file not found', str(caught.exception))
+            self.run_command('', file = '/nonexistent/mine.env')
+        self.assertIn('Settings file not found', str(caught.exception))
 
     def test_a_profile_without_a_file_in_the_checkout_is_created(self):
-        path = os.path.join(self.tmp.name, 'mine.env')
-        with open(path, 'w') as handle:
-            handle.write("DATADIR=/d\n")
-        with contextlib.redirect_stdout(io.StringIO()):
-            runner.cmd_profile(argparse.Namespace(repo_dir = self.tree, file = path, profile = 'ikoffice'))
+        self.run_command("DATADIR=/d\n", env_profile = 'ikoffice')
         with open(os.path.join(self.tree, '.env.ikoffice')) as handle:
             self.assertEqual(handle.read(), 'DATADIR=/d\n')
+
+    def test_only_suites_that_need_it_get_a_prepare_step(self):
+        from hub.adapters import adapter_class
+        self.assertTrue(adapter_class('comparison').has_prepare({'profile_file': '/x'}))
+        self.assertFalse(adapter_class('comparison').has_prepare({'profile_file': ''}))
+        self.assertFalse(adapter_class('command').has_prepare({}))
 
 
 if __name__ == '__main__':

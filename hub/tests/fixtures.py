@@ -1,9 +1,14 @@
 import argparse
+import contextlib
 import os
 import sys
 import types
+from unittest import mock
 
-import runner
+from hub import repos
+from hub.adapters.comparison import OutputComparisonAdapter
+from hub.commands import runs
+from hub.gitrepo import GitRepo
 from hub.tests import app_standin
 
 BASE_LINES = ['RELURL: doc/%d\nbody %d\n' % (i, i) for i in range(1, 21)]
@@ -71,27 +76,35 @@ def write_expected(directory):
             handle.write(text)
 
 
+REPO_KEY = 'indianlaw'
+
+
+def repo_config(root, **overrides):
+    values = dict(key = REPO_KEY, name = 'Indian Law', adapter = 'comparison', repo_dir = os.path.join(root, 'clones', 'indianlaw'),
+                  options = {'env_profile': 'local'}, python = 'python3', workers = ['w1', 'w2', 'w3'],
+                  branches = [repos.BranchConfig('testbranch'), repos.BranchConfig('main')])
+    values.update(overrides)
+    return repos.RepoConfig(**values)
+
+
+def write_profiles(results_dir, *configs):
+    """The snapshot the runner reads, in the results folder (where it looks by default). Returns its path."""
+    path = os.path.join(results_dir, repos.SNAPSHOT_NAME)
+    repos.save_snapshot(path, list(configs) or [repo_config(os.path.dirname(results_dir))])
+    return path
+
+
 def run_args(results_dir, **overrides):
     values = dict(tests = '', all = True, base = None, branch = 'testbranch',
-                  results_dir = results_dir, profile = 'local', datasrc = [],
-                  loglevel = 'info', run_id = 'r1', trigger = 'manual',
+                  results_dir = results_dir, repo = REPO_KEY, tree = None,
+                  profiles_file = os.path.join(results_dir, repos.SNAPSHOT_NAME),
+                  run_id = 'r1', trigger = 'manual',
                   requested_by = 'tester', reason = 'unit test', build_number = '7',
-                  build_url = 'http://bb.example/builders/1/builds/7', repo_dir = None)
+                  build_url = 'http://bb.example/builders/1/builds/7')
     values.update(overrides)
+    if not os.path.exists(values['profiles_file']):
+        write_profiles(results_dir)
     return argparse.Namespace(**values)
-
-
-def run_with_fake(results_dir, workdir, **overrides):
-    saved = (sys.stdout, sys.stderr, os.getcwd(), runner.ensure_paths, runner.load_environment)
-    fake  = make_regression()
-    runner.ensure_paths = lambda repo_dir = None: None
-    runner.load_environment = lambda args: (fake, None, [])
-    os.chdir(workdir)
-    try:
-        return runner.cmd_run(run_args(results_dir, **overrides))
-    finally:
-        sys.stdout, sys.stderr, cwd, runner.ensure_paths, runner.load_environment = saved
-        os.chdir(cwd)
 
 
 def sharded_args(results_dir, **overrides):
@@ -100,22 +113,43 @@ def sharded_args(results_dir, **overrides):
     return run_args(results_dir, **values)
 
 
-def call_with_fake(command, results_dir, workdir, load_error = None, broken_import = False, **overrides):
-    saved = (sys.stdout, sys.stderr, os.getcwd(), runner.ensure_paths, runner.load_environment)
-    fake  = make_regression()
-    runner.ensure_paths = lambda repo_dir = None: None
+@contextlib.contextmanager
+def fake_suite(workdir, load_error = None, broken_import = False, fake = None):
+    """The indianlaw adapter, with its `regression` module replaced by a fake one and no real clone needed."""
+    fake = fake or make_regression()
 
-    def load(args):
+    def load(self):
         if load_error:
             raise load_error
         return fake, None, []
 
-    runner.load_environment = load
-    sys.modules['regression'] = None if broken_import else fake
+    def import_regression(self):
+        if broken_import:
+            raise ImportError('cannot import regression')
+        return fake
+
+    saved = (sys.stdout, sys.stderr, os.getcwd())
+    patches = [mock.patch.object(OutputComparisonAdapter, 'activate', lambda self: None),
+               mock.patch.object(OutputComparisonAdapter, 'load_environment', load),
+               mock.patch.object(OutputComparisonAdapter, 'import_regression', import_regression),
+               mock.patch.object(GitRepo, 'verify', lambda self: None)]
+    for patch in patches:
+        patch.start()
     os.chdir(workdir)
     try:
-        return getattr(runner, command)(sharded_args(results_dir, **overrides))
+        yield fake
     finally:
-        sys.stdout, sys.stderr, cwd, runner.ensure_paths, runner.load_environment = saved
-        sys.modules.pop('regression', None)
+        for patch in patches:
+            patch.stop()
+        sys.stdout, sys.stderr, cwd = saved
         os.chdir(cwd)
+
+
+def run_with_fake(results_dir, workdir, **overrides):
+    with fake_suite(workdir):
+        return runs.cmd_run(run_args(results_dir, **overrides))
+
+
+def call_with_fake(command, results_dir, workdir, load_error = None, broken_import = False, **overrides):
+    with fake_suite(workdir, load_error = load_error, broken_import = broken_import):
+        return getattr(runs, command)(sharded_args(results_dir, **overrides))

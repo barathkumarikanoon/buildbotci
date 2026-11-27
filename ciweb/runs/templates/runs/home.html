@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% load ci_tags %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ ci_name }}</h1>
+    <p class="sub">How things are right now, and every repository with the history of its branches.</p>
+  </div>
+  {% if user.is_staff %}<a class="btn" href="{% url 'repo_list' %}">Manage repositories</a>{% endif %}
+</div>
+
+{% if cards %}
+<section class="health-hero {{ hero.level }}" aria-live="polite">
+  <span class="health-hero-mark" aria-hidden="true"></span>
+  <div class="health-hero-body">
+    <h2>{{ hero.title }}</h2>
+    <p>{{ hero.text }}</p>
+    {% if attention %}<ul class="health-hero-items">{% for item in attention %}<li><a href="{{ item.url }}"><strong>{{ item.title }}</strong><span>{{ item.text }}</span><span class="go" aria-hidden="true">Open →</span></a></li>{% endfor %}</ul>{% endif %}
+  </div>
+</section>
+
+<div class="repo-cards">
+  {% for c in cards %}
+  <article class="repo-card {{ c.level }}">
+    <header>
+      <div><h2><a class="stretch" href="{{ c.url }}">{{ c.repo.name }}</a></h2><div class="kind">{{ c.repo.adapter_label }}</div></div>
+      <span class="health {{ c.level }}">{{ c.health }}</span>
+    </header>
+    <div class="branch-lines">
+    {% for line in c.lines %}
+      <div class="branch-line">
+        <span class="chip">{{ line.name }}</span>
+        {% if line.history %}<span class="pips" aria-label="Results of the last {{ line.history|length }} runs, oldest first">{% for h in line.history %}<i class="pip {{ h.badge }}" title="{{ h.title }}"></i>{% endfor %}</span>
+        <span class="last {{ line.badge }}">{% if line.bad %}{{ line.bad }} failing{% else %}{{ line.badge|label }}{% endif %}<small>{% if line.rev %}{{ line.rev }} · {% endif %}{{ line.ago }}</small></span>
+        {% else %}<span class="muted small">no runs yet</span>{% endif %}
+      </div>
+    {% empty %}<div class="muted small">No branch is tested yet.</div>{% endfor %}
+    </div>
+    <footer>
+      <span class="muted small">{{ c.nightly }}{% if c.activity.text %} · <strong class="live">{{ c.activity.text }}</strong>{% endif %}</span>
+      {% if user.is_authenticated %}<a class="btn sm primary" href="{{ c.new_url }}"><svg class="ico sm"><use href="#i-play"/></svg>Run tests</a>{% endif %}
+    </footer>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card wide">
+  <h2>No repository is set up yet</h2>
+  {% if user.is_staff %}<p>Add the first one: describe where its code is, which branches to test and how its tests are judged.</p><a class="btn primary big" href="{% url 'repo_new' %}">Add a repository</a>
+  {% else %}<p class="muted">An administrator has to add a repository before anything can be tested.</p>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,23 +1,54 @@
 # Buildbot master. Install as /etc/systemd/system/buildbot-master.service, then:
 #   systemctl daemon-reload && systemctl enable --now buildbot-master
 # Replace "sushant" and the paths with the account and folders you use. systemd does not expand $HOME or %h here (%h is /root for system units).
+#
+# The database is the PostgreSQL cluster unit postgresql@localdbs.service (this file never changes that unit):
+#   Requires= + After=   Postgres is started first, and stopped last. If Postgres is stopped or restarted on purpose, the master
+#                        follows (it cannot work without its database), and starts again when you start it.
+#   ExecStartPre=        bin/wait-for-db: "started" only means pg_ctl returned; this waits until logins work (up to 90 seconds),
+#                        so the master does not fail its first start after a reboot or a crash recovery.
+# Change the instance name below if your cluster is called something else (systemctl list-units 'postgresql@*').
 [Unit]
-Description=Regression CI: Buildbot master
-After=network-online.target postgresql.service
+Description=CI: Buildbot master
+Documentation=file:///home/sushant/buildbotci/CLAUDE.md
+Requires=postgresql@localdbs.service
+After=network-online.target postgresql@localdbs.service
 Wants=network-online.target
+# Fail with a clear message, not a mystery, when the settings file is missing.
+AssertPathExists=/home/sushant/bb-master.env
+# Give up after 5 failed starts in 10 minutes instead of looping for ever: look at  journalctl -u buildbot-master
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
+Type=simple
 User=sushant
 WorkingDirectory=/home/sushant
 EnvironmentFile=/home/sushant/bb-master.env
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/home/sushant/.buildbotci/bin/python /home/sushant/buildbotci/bin/wait-for-db 90
 # --nodaemon keeps the master in the foreground so that systemd supervises it.
 ExecStart=/home/sushant/.buildbotci/bin/buildbot start --nodaemon /home/sushant/.buildbotci/master
+# systemctl reload buildbot-master: new configuration, running builds are kept.
 ExecReload=/home/sushant/.buildbotci/bin/buildbot reconfig /home/sushant/.buildbotci/master
 Restart=on-failure
 RestartSec=10
+# The master has to finish writing to the database before it stops; do not cut it short, and do not wait for ever.
+TimeoutStartSec=180
+TimeoutStopSec=60
+SyslogIdentifier=buildbot-master
 # Work that a crash cut off is retried by the master; keep it from taking the machine down.
 MemoryHigh=2G
 MemoryMax=3G
+TasksMax=1024
+LimitNOFILE=65536
+# Hardening that does not get in the way of the master (it writes only under the account's home).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
 
 [Install]
 WantedBy=multi-user.target

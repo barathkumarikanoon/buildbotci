@@ -1,25 +1,46 @@
-# One Buildbot worker per instance: buildbot-worker@w1 runs the worker in ~/.buildbotci/w1.
-#   systemctl enable --now buildbot-worker@w1 buildbot-worker@w2 buildbot-worker@w3
+# One Buildbot worker per instance: buildbot-worker@indianlaw-w1 runs the worker in ~/.buildbotci/indianlaw-w1.
+#   systemctl enable --now buildbot-worker@indianlaw-w1 buildbot-worker@indianlaw-w2 buildbot-worker@indianlaw-w3
+# (bin/workers start|stop|restart|status does the same without typing the unit names; add --systemd to force it.)
 # The memory limit is the important line: a module build that grows too large is stopped by systemd,
 # and the build fails, instead of the kernel stopping everything on the machine (out of memory).
 # Size it as: (total memory - 2 GB for the master, the UI and Postgres) / number of workers.
-# The workers do NOT load bb-master.env: they do not need the passwords of the master.
+# The workers do NOT load bb-master.env: they do not need the passwords of the master. They do not talk to the database
+# either (the master does), so they depend on the master and not on postgresql@localdbs.service. On the machine that runs
+# the master, that already puts them after Postgres; workers on other machines only need the network.
 [Unit]
-Description=Regression CI: Buildbot worker %i
-After=buildbot-master.service
-Wants=buildbot-master.service
+Description=CI: Buildbot worker %i
+Documentation=file:///home/sushant/buildbotci/CLAUDE.md
+After=network-online.target buildbot-master.service
+Wants=network-online.target buildbot-master.service
+# A worker whose folder was deleted (bin/delete-workers) does not start, and does not loop: the instance just stays off.
+ConditionPathExists=/home/sushant/.buildbotci/%i/buildbot.tac
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
+Type=simple
 User=sushant
 WorkingDirectory=/home/sushant/.buildbotci/%i
 Environment=HOME=/home/sushant
 Environment=PATH=/home/sushant/.buildbotci/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/sushant/.buildbotci/bin/buildbot-worker start --nodaemon /home/sushant/.buildbotci/%i
 Restart=on-failure
 RestartSec=15
+# SIGTERM makes the runner mark the unfinished tests aborted and finish its last steps; give it time, then SIGKILL.
+# KillMode=control-group also ends the test processes it started, so nothing keeps running after a stop.
+TimeoutStopSec=90
+KillMode=control-group
+SyslogIdentifier=buildbot-worker@%i
 MemoryHigh=3G
 MemoryMax=4G
 TasksMax=512
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
 
 [Install]
 WantedBy=multi-user.target

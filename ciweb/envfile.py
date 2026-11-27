@@ -26,7 +26,7 @@ def parse(text):
 
 def load(path = None):
     del CONFLICTS[:]
-    path = os.path.expanduser(os.path.expandvars(path or os.environ.get('REG_ENV_FILE') or '~/bb-master.env'))
+    path = os.path.expanduser(os.path.expandvars(path or os.environ.get('CI_ENV') or '~/bb-master.env'))
     try:
         with open(path, 'r', encoding = 'utf8') as handle:
             values = parse(handle.read())

@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import Client, TestCase, override_settings
 
+from ciweb.runs.tests.test_views import make_repo
 from ciweb.accounts.tests.test_accounts import GOOD, MAIL_ON, STRONG, person
 
 User = get_user_model()
@@ -15,6 +16,9 @@ def boss(name = 'boss', **extra):
 
 
 class HeaderTest(TestCase):
+    def setUp(self):
+        make_repo()
+
     def test_anonymous_visitors_see_sign_in_and_create_account(self):
         html = self.client.get('/').content.decode()
         self.assertIn('Sign in', html)
@@ -23,7 +27,7 @@ class HeaderTest(TestCase):
 
     def test_signed_in_people_see_who_they_are_and_a_clear_sign_out_button(self):
         self.client.force_login(person('alice'))
-        for path in ('/', '/new', '/account'):
+        for path in ('/', '/r/indianlaw/new', '/account'):
             html = self.client.get(path).content.decode()
             self.assertIn('class="signout"', html, path)
             self.assertIn('Sign out', html, path)
@@ -59,6 +63,7 @@ class HeaderTest(TestCase):
 
 class PeoplePageTest(TestCase):
     def setUp(self):
+        make_repo()
         self.boss = boss()
         self.client.force_login(self.boss)
 
@@ -117,10 +122,10 @@ class PeoplePageTest(TestCase):
     def test_disabling_signs_the_person_out_and_enabling_brings_them_back(self):
         alice = person('alice')
         member = Client(); member.force_login(alice)
-        self.assertEqual(member.get('/new').status_code, 200)
+        self.assertEqual(member.get('/r/indianlaw/new').status_code, 200)
         self.act(alice, 'disable')
         self.assertEqual(User.objects.get(pk = alice.pk).state, 'disabled')
-        self.assertEqual(member.get('/new').status_code, 302)
+        self.assertEqual(member.get('/r/indianlaw/new').status_code, 302)
         self.act(alice, 'approve')
         self.assertEqual(User.objects.get(pk = alice.pk).state, 'active')
 

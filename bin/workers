@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Start, stop, restart or show the Buildbot workers on this machine.
+#
+#   bin/workers status                          every worker folder here: running or stopped, and busy or not
+#   bin/workers start                           start all of them
+#   bin/workers stop egazette                   stop all workers of one repository
+#   bin/workers restart --worker egazette-w2    one worker (repeat --worker for several)
+#
+# Options:
+#   --dry-run   only say what would happen
+#   --force     stop or restart a worker even if it is running a build (that module's build ends, and the run marks its tests
+#               aborted), or when Buildbot cannot be asked. Without it a busy worker is left alone
+#   --systemd   use systemctl (buildbot-worker@<name>); --direct uses buildbot-worker on the folder. Default: systemd when the
+#               unit template is installed, otherwise direct
+# Under systemd you may need sudo: a failed command prints the line to run. Creating workers is bin/create-workers,
+# deleting them is bin/delete-workers.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+action="${1:-}"
+case "$action" in
+  start|stop|restart|status) shift ;;
+  *) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
+cd "$here"
+. "$(dirname "${BASH_SOURCE[0]}")/_login"
+[ "$action" = status ] || ci_has --dry-run "$@" || ci_login workers "$action $*"
+exec "$venv/bin/python" manage.py ci_repos "$action-workers" "$@"

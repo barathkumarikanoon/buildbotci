@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Stop {{ run.id }}?{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="{% url 'index' %}">Overview</a> / <a href="{{ index_url }}">{{ repo.name }}</a> / <a href="{{ run_url }}">{{ run.id }}</a> / Stop</div>
+
+<div class="card wide confirm">
+  <h1>Stop a run that is not yours?</h1>
+  <p>
+    {% if automatic %}
+      This run was started <strong>automatically</strong> ({{ run.trigger }}), not by a person.
+    {% else %}
+      This run was started by <strong>{{ owner }}</strong>, not by you.
+    {% endif %}
+    You can stop it because you are an administrator.
+  </p>
+  <dl class="meta">
+    <div><dt>Run</dt><dd class="mono">{{ run.id }}</dd></div>
+    <div><dt>Repository</dt><dd>{{ repo.name }}</dd></div>
+    <div><dt>Branch</dt><dd>{{ run.branch }}</dd></div>
+    <div><dt>Progress</dt><dd>{{ done }} of {{ total }} tests finished</dd></div>
+  </dl>
+  <p class="muted">Running tests are interrupted and every test that has not finished is marked <em>aborted</em>. Finished tests keep their results. This cannot be undone.</p>
+  <form method="post" action="{{ stop_url }}" class="acts">
+    {% csrf_token %}
+    <input type="hidden" name="confirm" value="yes">
+    <button type="submit" class="btn danger" id="confirm-stop">Yes, stop {% if automatic %}this run{% else %}{{ owner }}'s run{% endif %}</button>
+    <a class="btn ghost" href="{{ run_url }}">No, keep it running</a>
+  </form>
+</div>
+{% endblock %}

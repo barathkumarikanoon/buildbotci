@@ -18,7 +18,7 @@ User = get_user_model()
 
 
 class Command(BaseCommand):
-    help = 'Manage the accounts of the regression web UI: list, add, approve, enable, disable, reset, passwd, unlock, mail-test'
+    help = 'Manage the accounts of the CI website: list, add, approve, enable, disable, reset, passwd, unlock, mail-test'
 
     def add_arguments(self, parser):
         parser.add_argument('--password-stdin', action = 'store_true', help = 'read the password from standard input instead of asking')
@@ -106,16 +106,16 @@ class Command(BaseCommand):
     def do_reset(self, options):
         user = self.user(options['username'])
         if not settings.PUBLIC_URL:
-            raise CommandError('Set REG_UI_URL to the address of the web UI, so the link can be printed.')
+            raise CommandError('Set CI_UI_URL to the address of the website, so the link can be printed.')
         path = reverse('password_reset_confirm', args = [urlsafe_base64_encode(force_bytes(user.pk)), default_token_generator.make_token(user)])
         self.stdout.write('Send this link to %s. It works for %d minutes, until the password is changed:' % (user.username, settings.PASSWORD_RESET_TIMEOUT // 60))
         self.stdout.write(settings.PUBLIC_URL.rstrip('/') + path)
 
     def do_mail_test(self, options):
         if not settings.MAIL_CONFIGURED:
-            raise CommandError('Email is not set up. Set REG_SMTP_HOST, REG_SMTP_FROM and REG_UI_URL (and REG_SMTP_USER, REG_SMTP_PASSWORD, REG_SMTP_PORT, REG_SMTP_SECURITY).')
+            raise CommandError('Email is not set up. Set CI_SMTP_HOST, CI_SMTP_FROM and CI_UI_URL (and CI_SMTP_USER, CI_SMTP_PASSWORD, CI_SMTP_PORT, CI_SMTP_SECURITY).')
         try:
-            send_mail('IK Regressions test message', 'If you can read this, password reset emails will work.\n', None, [options['email']])
+            send_mail('%s test message' % settings.SITE_NAME, 'If you can read this, password reset emails will work.\n', None, [options['email']])
         except (OSError, smtplib.SMTPException) as exc:
             raise CommandError('Sending failed: %s' % exc)
         self.stdout.write('sent a test message to %s' % options['email'])

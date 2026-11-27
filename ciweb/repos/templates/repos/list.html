@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}Repository profiles{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Repository profiles</h1>
+    <p class="sub">Every repository tested here: where its code is, which Python runs it, how its tests are judged, which branches to watch and which workers serve it. Add a repository here and it appears in the site and in Buildbot; nothing else needs editing.</p>
+  </div>
+  <a class="btn primary big" href="{% url 'repo_new' %}">Add a repository</a>
+</div>
+<div class="flash {% if sync_state == 'error' %}error{% else %}info{% endif %}" data-sync="{{ sync_state }}"><strong>Buildbot:</strong> {{ sync_text }}</div>
+
+<div class="card flush wide">
+  <table class="grid repos">
+    <thead><tr><th>Repository</th><th>Test suite type</th><th>Branches</th><th>Workers</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{% url 'repo_runs' r.repo.key %}"><strong>{{ r.repo.name }}</strong></a><div class="muted small mono">{{ r.repo.key }}</div></td>
+        <td>{{ r.repo.adapter_label }}</td>
+        <td>{% for b in r.branches %}<span class="chip">{{ b }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
+        <td class="small">{% for w in r.workers %}<span class="chip worker-{{ w.state }}" title="{{ w.label }}: {{ w.hint }}">{{ w.name }}</span> {% endfor %}<div class="muted small">{{ r.worker_summary }}</div></td>
+        <td>{% if r.repo.enabled %}<span class="badge passed">enabled</span>{% else %}<span class="badge aborted">disabled</span>{% endif %}</td>
+        <td class="row-actions">
+          <a class="btn" href="{% url 'repo_edit' r.repo.key %}">Edit</a>
+          <form method="post" action="{% url 'repo_toggle' r.repo.key %}" class="inline-form"{% if r.repo.enabled %} data-confirm-title="Disable {{ r.repo.name }}?" data-confirm="Testing of this repository stops now." data-confirm-items="{{ r.open_runs }} run{{ r.open_runs|pluralize }} in progress will be stopped and marked aborted|Waiting requests are cancelled and its nightly schedulers are removed from Buildbot|Results, settings and worker folders are kept; Enable brings it back" data-confirm-ok="Yes, disable" data-confirm-tone="warn"{% endif %}>{% csrf_token %}<button type="submit">{% if r.repo.enabled %}Disable{% else %}Enable{% endif %}</button></form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="empty-row">No repository is configured yet. Press <strong>Add a repository</strong>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

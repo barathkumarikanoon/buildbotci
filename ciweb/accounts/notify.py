@@ -22,19 +22,19 @@ def deliver(subject, body, recipients):
 
 def new_signup(user):
     return deliver('New sign-up waiting for approval: %s' % user.username,
-                   'Someone signed up for IK Regressions and is waiting for you to approve the account.\n\n'
+                   'Someone signed up for %s and is waiting for you to approve the account.\n\n'
                    'User name: %s\nEmail: %s\nEmail confirmed: %s\n\nReview and approve: %s\n'
-                   % (user.username, user.email, 'yes' if user.email_verified else 'not yet', public_link(reverse('people'))),
+                   % (settings.SITE_NAME, user.username, user.email, 'yes' if user.email_verified else 'not yet', public_link(reverse('people'))),
                    staff_emails())
 
 
 def approved(user):
-    return deliver('Your IK Regressions account is approved',
+    return deliver('Your %s account is approved' % settings.SITE_NAME,
                    'Hello %s,\n\nYour account has been approved. You can sign in here:\n\n%s\n'
                    % (user.username, public_link(reverse('login'))), [user.email])
 
 
 def rejected(user):
-    return deliver('Your IK Regressions sign-up was not approved',
+    return deliver('Your %s sign-up was not approved' % settings.SITE_NAME,
                    'Hello %s,\n\nYour sign-up was not approved. If you think this is a mistake, ask an administrator.\n' % user.username,
                    [user.email])

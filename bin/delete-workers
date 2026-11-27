@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stop and delete chosen Buildbot workers on this machine (their folders and checkouts). The repository stays.
+#
+#   bin/delete-workers egazette                       every worker of that repository (shows what it would do)
+#   bin/delete-workers --worker egazette-w3           one worker (repeat --worker for several)
+#   bin/delete-workers --orphans                      folders that no repository lists any more
+#   bin/delete-workers egazette --worker egazette-w3 --shrink --yes
+#
+# Without --yes nothing is changed: it only lists what would happen. Options:
+#   --shrink         also take the workers out of the repository (its worker count goes down; the master drops them)
+#   --keep-profile   delete only the folders; the repository still lists them (bin/create-workers makes them again)
+#   --force          delete a worker even if it is running a build, or Buildbot cannot be asked
+# A worker that serves a repository needs --shrink or --keep-profile. A worker that systemd runs is skipped: stop it first
+# with  sudo systemctl disable --now buildbot-worker@<name>.  To delete a whole repository, use  manage.py ci_repos remove.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
+cd "$here"
+. "$(dirname "${BASH_SOURCE[0]}")/_login"
+! ci_has --yes "$@" || ci_login delete-workers "$*"
+exec "$venv/bin/python" manage.py ci_repos remove-workers "$@"

@@ -2,7 +2,7 @@
 {% load ci_tags %}
 {% block title %}{{ run.id }}{% endblock %}
 {% block content %}
-<div class="crumbs"><a href="{{ index_url }}">Runs</a> / {{ run.id }}</div>
+<div class="crumbs"><a href="{% url 'index' %}">Overview</a> / <a href="{{ index_url }}">{{ repo.name }}</a> / {{ run.id }}</div>
 
 <section class="hero {{ badge }}" id="hero">
   <div>
@@ -12,11 +12,17 @@
       on <strong>{{ run.branch }}</strong>{% if run.reason %} · “{{ run.reason }}”{% endif %}
     </p>
   </div>
-  {% if live and user.is_authenticated and not stop %}
-  <form class="acts" method="post" action="{{ stop_url }}" onsubmit="return confirm('Stop this run? Running tests are interrupted and the rest are marked aborted.');">
+  {% if live and stop_rights and not stop %}
+  {% if stop_rights == 'own' %}
+  <form class="acts" method="post" action="{{ stop_url }}" data-confirm-title="Stop this run?" data-confirm="Running tests are interrupted and every test that has not finished is marked aborted. Finished tests keep their results." data-confirm-ok="Yes, stop the run" data-confirm-tone="danger">
     {% csrf_token %}
     <button type="submit" class="btn danger" id="stop-run">Stop run</button>
   </form>
+  {% else %}
+  <div class="acts">
+    <a class="btn danger" id="stop-run" href="{{ stop_url }}" title="You can stop it because you are an administrator; you will be asked to confirm.">Stop run (administrator)</a>
+  </div>
+  {% endif %}
   {% endif %}
 </section>
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-venv="${REG_UI_VENV:-$HOME/.buildbotci}"
-env_file="${REG_ENV_FILE:-$HOME/bb-master.env}"
-pid_file="${REG_UI_PID_FILE:-$venv/ui.pid}"
-bind="${REG_UI_BIND:-127.0.0.1:8020}"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+env_file="${CI_ENV:-$HOME/bb-master.env}"
+pid_file="${CI_UI_PID_FILE:-$venv/ui.pid}"
+bind="${CI_UI_BIND:-127.0.0.1:8020}"
 cd "$here"
 set -a; . "$env_file"; set +a
 "$venv/bin/python" manage.py migrate --noinput
 "$venv/bin/python" manage.py collectstatic --noinput --verbosity 0
-exec "$venv/bin/gunicorn" -w "${REG_UI_WORKERS:-2}" -b "$bind" --pid "$pid_file" ciweb.wsgi:application
+exec "$venv/bin/gunicorn" -w "${CI_UI_WORKERS:-2}" -b "$bind" --pid "$pid_file" ciweb.wsgi:application

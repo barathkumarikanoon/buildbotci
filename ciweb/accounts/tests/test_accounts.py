@@ -12,6 +12,7 @@ from django.db import IntegrityError, transaction
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
+from ciweb.runs.tests.test_views import make_repo
 from ciweb.accounts import lockout
 
 User     = get_user_model()
@@ -65,6 +66,7 @@ class UserModelTest(TestCase):
 
 class LoginTest(TestCase):
     def setUp(self):
+        make_repo()
         self.alice = person('alice')
         person('wait', 'pending')
         person('off', 'disabled')
@@ -76,7 +78,7 @@ class LoginTest(TestCase):
         for who in ('alice', 'ALICE', 'alice@example.com', 'Alice@Example.com'):
             client = Client()
             self.assertEqual(self.login(who, client = client).status_code, 302, who)
-            self.assertEqual(client.get('/new').status_code, 200)
+            self.assertEqual(client.get('/r/indianlaw/new').status_code, 200)
 
     def test_the_cookie_is_http_only_and_same_site_lax(self):
         reply = self.login('alice')
@@ -116,21 +118,21 @@ class LoginTest(TestCase):
         self.assertEqual(User.objects.get(username = 'alice').failed_logins, 0)
 
     def test_after_login_only_local_pages_can_be_the_destination(self):
-        for target, expected in (('/new?branch=2026', '/new?branch=2026'), ('//evil.example/x', '/'),
+        for target, expected in (('/r/indianlaw/new?branch=2026', '/r/indianlaw/new?branch=2026'), ('//evil.example/x', '/'),
                                  ('http://evil.example', '/'), ('https://evil.example/new', '/'), ('', '/')):
             reply = self.login('alice', client = Client(), next = target)
             self.assertEqual(reply['Location'], expected, target)
 
     def test_the_login_page_for_a_page_that_needs_it_comes_back_to_it(self):
-        reply = self.client.get('/new?branch=2026')
+        reply = self.client.get('/r/indianlaw/new?branch=2026')
         self.assertEqual(reply.status_code, 302)
-        self.assertIn('/login?next=/new%3Fbranch%3D2026', reply['Location'])
+        self.assertIn('/login?next=/r/indianlaw/new%3Fbranch%3D2026', reply['Location'])
 
     def test_sign_out_needs_a_post_and_ends_the_session(self):
         self.login('alice')
         self.assertEqual(self.client.get('/logout').status_code, 405)
         self.assertEqual(self.client.post('/logout').status_code, 302)
-        self.assertEqual(self.client.get('/new').status_code, 302)
+        self.assertEqual(self.client.get('/r/indianlaw/new').status_code, 302)
 
     def test_forms_without_the_secret_token_are_refused(self):
         strict = Client(enforce_csrf_checks = True)
@@ -141,9 +143,9 @@ class LoginTest(TestCase):
 
     def test_a_disabled_account_is_signed_out_on_its_next_request(self):
         self.login('alice')
-        self.assertEqual(self.client.get('/new').status_code, 200)
+        self.assertEqual(self.client.get('/r/indianlaw/new').status_code, 200)
         User.objects.filter(username = 'alice').update(is_active = False)
-        self.assertEqual(self.client.get('/new').status_code, 302)
+        self.assertEqual(self.client.get('/r/indianlaw/new').status_code, 302)
 
     def test_browsers_post_forms_with_the_real_origin_and_not_origin_null(self):
         reply = self.client.get('/login')
@@ -247,6 +249,7 @@ class SignupTest(TestCase):
 @override_settings(**MAIL_ON)
 class PasswordResetTest(TestCase):
     def setUp(self):
+        make_repo()
         self.alice = person('alice')
 
     def ask(self, email = 'alice@example.com', **extra):
@@ -257,7 +260,7 @@ class PasswordResetTest(TestCase):
 
     def test_a_link_arrives_works_once_and_signs_everyone_out(self):
         member = Client(); member.post('/login', {'username': 'alice', 'password': GOOD})
-        self.assertEqual(member.get('/new').status_code, 200)
+        self.assertEqual(member.get('/r/indianlaw/new').status_code, 200)
         self.assertEqual(self.ask('ALICE@example.com').status_code, 302)
         self.assertEqual(len(mail.outbox), 1)
         link  = self.link()
@@ -272,7 +275,7 @@ class PasswordResetTest(TestCase):
         self.assertEqual(self.client.post(form, {'new_password1': NEW, 'new_password2': NEW}).status_code, 302)
         fresh = Client().get(link, follow = True)
         self.assertIn('not valid or has expired', fresh.content.decode())
-        self.assertEqual(member.get('/new').status_code, 302)
+        self.assertEqual(member.get('/r/indianlaw/new').status_code, 302)
         self.assertEqual(page_errors(Client().post('/login', {'username': 'alice', 'password': GOOD})), ['Wrong user name or password.'])
         self.assertEqual(Client().post('/login', {'username': 'alice', 'password': NEW}).status_code, 302)
 
@@ -435,7 +438,7 @@ class CommandTest(TestCase):
     @override_settings(PUBLIC_URL = '')
     def test_reset_needs_the_address_of_the_web_ui(self):
         person('bob')
-        with self.assertRaisesMessage(CommandError, 'REG_UI_URL'):
+        with self.assertRaisesMessage(CommandError, 'CI_UI_URL'):
             self.run_cli('reset', 'bob')
 
     def test_an_unknown_user_is_reported(self):
@@ -443,7 +446,7 @@ class CommandTest(TestCase):
             self.run_cli('approve', 'ghost')
 
     def test_mail_test_explains_missing_settings_and_sends_when_they_exist(self):
-        with self.assertRaisesMessage(CommandError, 'REG_SMTP_HOST'):
+        with self.assertRaisesMessage(CommandError, 'CI_SMTP_HOST'):
             self.run_cli('mail-test', 'me@example.com')
         with override_settings(**MAIL_ON):
             self.run_cli('mail-test', 'me@example.com')

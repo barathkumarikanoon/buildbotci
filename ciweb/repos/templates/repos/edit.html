@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}{% if creating %}Add a repository{% else %}{{ profile.name }}{% endif %}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="{% url 'repo_list' %}">Repository profiles</a> / {% if creating %}New{% else %}{{ profile.key }}{% endif %}</div>
+<div class="page-head">
+  <div>
+    <h1>{% if creating %}Add a repository{% else %}{{ profile.name }}{% endif %}</h1>
+    <p class="sub">{% if creating %}Describe the repository once. Saving it adds it to the site and tells Buildbot to create its builders and workers.{% else %}Changes are written to Buildbot as soon as you save; running builds are not interrupted.{% endif %}</p>
+  </div>
+  {% if not creating %}<a class="btn" href="{% url 'repo_runs' profile.key %}">View results</a>{% endif %}
+</div>
+
+{% if sync_state %}<div class="flash {% if sync_state == 'error' %}error{% else %}info{% endif %}" data-sync="{{ sync_state }}"><strong>Buildbot:</strong> {{ sync_text }}</div>{% endif %}
+{% for error in form.non_field_errors %}<div class="flash error">{{ error }}</div>{% endfor %}
+{% for error in formset.non_form_errors %}<div class="flash error">{{ error }}</div>{% endfor %}
+{% if form.errors and not form.non_field_errors %}<div class="flash error">Some settings need attention; they are marked below.</div>{% endif %}
+
+{% if checks %}
+<div class="card wide checks">
+  <h2>Health of this machine</h2>
+  <ul class="check-list">{% for level, text in checks %}<li class="{{ level }}"><span class="dot"></span>{{ text }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if worker_rows %}
+<div class="card wide workers-status">
+  <div class="card-head">
+    <h2>Workers <span class="muted small">{{ worker_summary }}</span></h2>
+    {% if profile.enabled and workers_to_fix %}<form method="post" action="{% url 'repo_workers' profile.key %}" class="inline-form">{% csrf_token %}<button type="submit" class="btn primary">Create and start workers</button></form>{% endif %}
+  </div>
+  <p class="muted small">Whether each worker is connected to the Buildbot master right now. A worker that is not connected cannot take a module of a run, so runs wait for the others.</p>
+  <table class="grid">
+    <thead><tr><th>Worker</th><th>Status</th><th>What to do</th></tr></thead>
+    <tbody>{% for w in worker_rows %}
+      <tr><td class="mono">{{ w.name }}</td>
+        <td><span class="badge {% if w.state == 'connected' %}passed{% elif w.state == 'busy' %}running{% elif w.state == 'stopped' %}no_expected{% else %}aborted{% endif %}">{{ w.label }}</span></td>
+        <td class="small {% if w.state == 'stopped' or w.state == 'not_created' %}mono{% endif %}">{{ w.hint }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+{% endif %}
+
+<nav class="steps" aria-label="The steps of this form">
+  <a href="#step-code" class="step-link" data-step="code"><span class="num">1</span>Code</a>
+  <a href="#step-tests" class="step-link" data-step="tests"><span class="num">2</span>Tests</a>
+  <a href="#step-branches" class="step-link" data-step="branches"><span class="num">3</span>Branches</a>
+  <a href="#step-workers" class="step-link" data-step="workers"><span class="num">4</span>Workers</a>
+</nav>
+
+<form method="post" class="repo-form" id="repo-form" data-probe-url="{% url 'repo_probe' %}" data-creating="{% if creating %}1{% else %}0{% endif %}">
+  {% csrf_token %}
+
+  <section class="card wide form-step" id="step-code">
+    <header class="step-head"><span class="num">1</span><div><h2>Where is the code?</h2><p class="muted">The CI reads a git clone that already exists on this machine and never changes it. Give its folder: the rest of this step fills itself in.</p></div></header>
+    {% for field in form %}{% if field.name == 'repo_dir' %}<div class="field-big">{% include 'repos/_field.html' %}</div>{% endif %}{% endfor %}
+    <ul class="probe" id="probe" aria-live="polite" hidden></ul>
+    <div class="form-grid">
+      {% for field in form %}{% if field.name == 'python' or field.name == 'name' or field.name == 'key' %}{% include 'repos/_field.html' %}{% endif %}{% endfor %}
+    </div>
+    <p class="probe-line" id="python-check" aria-live="polite" hidden></p>
+    <details class="advanced"{% if form.errors.description or form.errors.checkout_name or form.errors.env_text %} open{% endif %}>
+      <summary>More about this repository <span class="muted small">description, checkout name, environment variables</span></summary>
+      <div class="form-grid">
+        {% for field in form %}{% if field.name == 'description' or field.name == 'checkout_name' or field.name == 'env_text' or field.name == 'enabled' %}{% include 'repos/_field.html' %}{% endif %}{% endfor %}
+      </div>
+    </details>
+  </section>
+
+  <section class="card wide form-step" id="step-tests">
+    <header class="step-head"><span class="num">2</span><div><h2>How are its tests run?</h2><p class="muted">Pick the kind of test suite. When the folder was read, the likely one is marked.</p></div></header>
+    <div class="suite-cards" role="radiogroup" aria-label="Test suite type">
+      {% for section in sections %}
+      <label class="suite-card" data-kind="{{ section.kind }}">
+        <input type="radio" name="adapter" value="{{ section.kind }}"{% if form.adapter.value == section.kind %} checked{% endif %}>
+        <span class="suite-name">{{ section.label }}</span>
+        <span class="suite-for">{{ section.best_for }}</span>
+        <span class="badge passed suite-tag" hidden>Looks right</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% for error in form.adapter.errors %}<span class="bad small">{{ error }}</span>{% endfor %}
+    <p class="muted small" id="suite-why" hidden></p>
+    {% for section in sections %}
+    <div class="adapter-options" data-adapter="{{ section.kind }}">
+      <p class="muted">{{ section.summary }}</p>
+      <div class="form-grid">{% for field in section.fields %}{% include 'repos/_field.html' %}{% endfor %}</div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="card wide form-step" id="step-branches">
+    <header class="step-head"><span class="num">3</span><div><h2>Which branches should be tested?</h2><p class="muted">Anyone can run tests on a listed branch when they like. The ones marked <strong>Every night</strong> are also tested by themselves each night, when they have new commits.</p></div></header>
+    <p class="branch-suggest" id="branch-suggest" hidden><span class="muted small">Found in the clone, press to add:</span> <span id="branch-chips"></span></p>
+    {{ formset.management_form }}
+    <div class="table-wrap">
+    <table class="grid branch-rows" id="branch-rows">
+      <thead><tr><th>Branch</th><th>Automatic</th><th>Own time <span class="muted small">(optional)</span></th><th class="right"></th></tr></thead>
+      <tbody>
+      {% for bform in formset %}
+        <tr class="branch-row" data-existing="{% if bform.instance.pk %}1{% else %}0{% endif %}">
+          <td>{% for h in bform.hidden_fields %}{{ h }}{% endfor %}{{ bform.name }}{% for e in bform.name.errors %}<span class="bad small">{{ e }}</span>{% endfor %}</td>
+          <td><label class="switch">{{ bform.scheduled }}<span>Every night</span></label></td>
+          <td><span class="own-time"><label>At hour {{ bform.cron_hour }}</label><label>minute {{ bform.cron_minute }}</label></span>{% for e in bform.cron_hour.errors %}<span class="bad small">{{ e }}</span>{% endfor %}{% for e in bform.cron_minute.errors %}<span class="bad small">{{ e }}</span>{% endfor %}</td>
+          <td class="right">{% if bform.instance.pk %}<span hidden>{{ bform.DELETE }}</span>{% endif %}<button type="button" class="btn ghost danger-text remove-branch" title="Remove this branch">Remove</button></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <template id="branch-template">
+      <tr class="branch-row" data-existing="0">
+        <td>{{ formset.empty_form.name }}</td>
+        <td><label class="switch">{{ formset.empty_form.scheduled }}<span>Every night</span></label></td>
+        <td><span class="own-time"><label>At hour {{ formset.empty_form.cron_hour }}</label><label>minute {{ formset.empty_form.cron_minute }}</label></span></td>
+        <td class="right"><button type="button" class="btn ghost danger-text remove-branch" title="Remove this branch">Remove</button></td>
+      </tr>
+    </template>
+    <p class="row-actions"><button type="button" class="btn" id="add-branch"><svg class="ico"><use href="#i-plus"/></svg>Add another branch</button></p>
+    <div class="nightly-default">
+      {% for field in form %}{% if field.name == 'schedule' %}{% include 'repos/_field.html' %}{% endif %}{% endfor %}
+      <div class="form-grid">{% for field in form %}{% if field.name == 'cron_hour' or field.name == 'cron_minute' %}{% include 'repos/_field.html' %}{% endif %}{% endfor %}</div>
+      <p class="muted small">This is the default time of the nightly runs. A branch with its own time (above) uses that instead. Cron syntax works: <span class="mono">3,15</span>, <span class="mono">*/20</span>. Branches are tested from <span class="mono">origin</span>, so they have to exist there.</p>
+    </div>
+  </section>
+
+  <section class="card wide form-step" id="step-workers">
+    <header class="step-head"><span class="num">4</span><div><h2>How many tests at the same time?</h2><p class="muted">Each module of a run goes to its own worker, so this many modules run together. The workers are created and started for you when you save.</p></div></header>
+    <div class="form-grid">
+      {% for field in form %}{% if field.name == 'worker_count' %}{% include 'repos/_field.html' %}{% endif %}{% endfor %}
+    </div>
+    <details class="advanced"{% if form.errors.worker_names or form.errors.max_runs or form.errors.max_shards or form.errors.max_parallel or form.errors.step_timeout or form.errors.step_max_time %} open{% endif %}>
+      <summary>Advanced <span class="muted small">worker names and limits</span></summary>
+      <div class="form-grid">
+        {% for field in form %}{% if field.name == 'worker_names' or field.name == 'max_runs' or field.name == 'max_shards' or field.name == 'max_parallel' or field.name == 'step_timeout' or field.name == 'step_max_time' %}{% include 'repos/_field.html' %}{% endif %}{% endfor %}
+      </div>
+    </details>
+    {% if missing_workers %}<div class="flash info">Workers to create on this machine: <span class="mono">{{ missing_workers|join:', ' }}</span>. Run <span class="mono">bin/create-workers {{ profile.key }}</span>, then <span class="mono">bin/workers start {{ profile.key }}</span>.</div>{% endif %}
+  </section>
+
+  <p class="form-summary" id="form-summary" aria-live="polite"></p>
+  <div class="form-actions"><button type="submit" class="btn primary big">{% if creating %}Add repository{% else %}Save{% endif %}</button> <a class="btn big" href="{% url 'repo_list' %}">Cancel</a></div>
+</form>
+
+{% if not creating %}
+<section class="card wide danger-zone">
+  <h2>Delete this repository profile</h2>
+  <p class="muted">Stops its runs, removes the repository from the site and from Buildbot (its builders, schedulers and workers), and can delete its workers and results. You will see exactly what happens before you confirm. To keep it but stop testing it, use Disable instead.</p>
+  <a class="btn danger" href="{% url 'repo_delete' profile.key %}">Delete…</a>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="{% static 'repos/repo_form.js' %}"></script>{% endblock %}

@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Wait until the CI's PostgreSQL database accepts connections, then exit 0. Exit 1 when it does not within the time.
+
+    bin/wait-for-db [SECONDS]        default 90, or CI_DB_WAIT_SECONDS
+
+The systemd units of the master and the web UI run it before they start (ExecStartPre), after
+postgresql@localdbs.service: that unit is "started" when pg_ctl returns, which can be before the database accepts
+logins (crash recovery, a slow start). It reads the same settings file as the programs (CI_ENV, default
+~/bb-master.env) and the same database address (CI_UI_DB_URL, else BUILDBOT_DB_URL). Another kind of database
+(sqlite) needs no waiting. It never prints the password. Run it with the Python of the CI environment (it needs psycopg2).
+"""
+import os
+import sys
+import time
+from urllib.parse import parse_qs, unquote, urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ciweb import envfile  # noqa: E402
+
+
+def main():
+    envfile.load()
+    url = os.environ.get('CI_UI_DB_URL') or os.environ.get('BUILDBOT_DB_URL') or ''
+    parts = urlparse(url)
+    if not parts.scheme.startswith('postgres'):
+        print('wait-for-db: not a PostgreSQL address, nothing to wait for.')
+        return 0
+    try:
+        import psycopg2
+    except ImportError:
+        print('wait-for-db: psycopg2 is missing: run this with the Python of the CI environment.', file = sys.stderr)
+        return 1
+    wait = float(sys.argv[1]) if len(sys.argv) > 1 else float(os.environ.get('CI_DB_WAIT_SECONDS', '90'))
+    ssl  = (parse_qs(parts.query).get('sslmode') or [''])[0]
+    args = {'host': parts.hostname or 'localhost', 'port': parts.port or 5432, 'dbname': unquote(parts.path.lstrip('/')),
+            'user': unquote(parts.username or ''), 'password': unquote(parts.password or ''), 'connect_timeout': 3}
+    if ssl:
+        args['sslmode'] = ssl
+    where    = '%s:%s/%s as %s' % (args['host'], args['port'], args['dbname'], args['user'])
+    deadline = time.time() + wait
+    started  = time.time()
+    noted    = 0
+    while True:
+        try:
+            psycopg2.connect(**args).close()
+            print('wait-for-db: %s accepts connections (after %d s).' % (where, time.time() - started))
+            return 0
+        except psycopg2.Error as exc:
+            reason = str(exc).strip().splitlines()[0].strip() if str(exc).strip() else exc.__class__.__name__
+        if time.time() >= deadline:
+            print('wait-for-db: %s did not accept connections within %d s: %s' % (where, wait, reason), file = sys.stderr)
+            return 1
+        if time.time() - started >= noted:
+            print('wait-for-db: waiting for %s (%s)' % (where, reason), file = sys.stderr)
+            noted += 10
+        time.sleep(1)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

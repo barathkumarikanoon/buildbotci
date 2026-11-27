@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Create the Buildbot workers of the repo profiles (the ones that do not exist yet on this machine), then tell you how to start them.
+#
+#   bin/create-workers              every repo profile
+#   bin/create-workers egazette     only that one
+#
+# The names and the number of workers of each repo are set in the web UI (Repo profiles). Run this after adding a repo
+# or raising its number of workers. It only creates the worker folders (CI_WORKERS_DIR/<name>); starting them is one
+# systemd instance each:  systemctl enable --now buildbot-worker@<name>
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${CI_UI_VENV:-$HOME/.buildbotci}"
+set -a; . "${CI_ENV:-$HOME/bb-master.env}"; set +a
+cd "$here"
+. "$(dirname "${BASH_SOURCE[0]}")/_login"
+ci_login create-workers "$*"
+exec "$venv/bin/python" manage.py ci_repos workers --create "$@"

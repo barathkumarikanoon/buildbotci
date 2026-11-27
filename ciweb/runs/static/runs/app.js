@@ -94,3 +94,108 @@
     else { show(start || 'analysis'); }
   }
 })();
+
+
+// ---- the sidebar on a small screen ---------------------------------------------------------------------------------
+(function () {
+  var button = document.getElementById('menu-btn');
+  var scrim = document.getElementById('scrim');
+  if (!button) { return; }
+  function set(open) { document.body.classList.toggle('nav-open', open); }
+  button.addEventListener('click', function () { set(!document.body.classList.contains('nav-open')); });
+  if (scrim) { scrim.addEventListener('click', function () { set(false); }); }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { set(false); } });
+})();
+
+// ---- warnings: every risky action asks first, in a dialog ----------------------------------------------------------
+// A form (or its submit button) with data-confirm opens the dialog before it is sent:
+//   data-confirm="what happens"  data-confirm-title="Title"  data-confirm-items="one|two|three"
+//   data-confirm-ok="Button text"  data-confirm-tone="danger|warn"
+// window.ciConfirm({title, text, items, ok, tone}, callback) opens the same dialog from script.
+(function () {
+  var dialog = document.getElementById('confirm-dialog');
+  if (!dialog || typeof dialog.showModal !== 'function') { return; }
+  var title = document.getElementById('confirm-title');
+  var text = document.getElementById('confirm-text');
+  var items = document.getElementById('confirm-items');
+  var yes = document.getElementById('confirm-yes');
+  var no = document.getElementById('confirm-no');
+  var pending = null;
+
+  function ask(options, done) {
+    title.textContent = (options.tone === 'warn' ? '\u26A0 ' : '\u26A0 ') + (options.title || 'Are you sure?');
+    text.textContent = options.text || '';
+    text.hidden = !options.text;
+    items.textContent = '';
+    (options.items || []).forEach(function (line) {
+      var li = document.createElement('li');
+      li.textContent = line;
+      items.appendChild(li);
+    });
+    items.hidden = !(options.items || []).length;
+    yes.textContent = options.ok || 'Confirm';
+    yes.className = 'btn ' + (options.tone === 'warn' ? 'warn' : 'danger');
+    dialog.className = 'warn-dialog ' + (options.tone === 'warn' ? 'tone-warn' : 'tone-danger');
+    pending = done;
+    dialog.showModal();
+    no.focus();
+  }
+  window.ciConfirm = ask;
+
+  yes.addEventListener('click', function () { var done = pending; pending = null; dialog.close(); if (done) { done(); } });
+  no.addEventListener('click', function () { pending = null; dialog.close(); });
+  dialog.addEventListener('cancel', function () { pending = null; });
+
+  var passed = new WeakSet();
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    var source = (event.submitter && event.submitter.dataset.confirm) ? event.submitter : form;
+    if (!source.dataset || !source.dataset.confirm || passed.has(form)) { return; }
+    event.preventDefault();
+    ask({
+      title: source.dataset.confirmTitle,
+      text: source.dataset.confirm,
+      items: source.dataset.confirmItems ? source.dataset.confirmItems.split('|') : [],
+      ok: source.dataset.confirmOk,
+      tone: source.dataset.confirmTone
+    }, function () {
+      passed.add(form);
+      if (event.submitter && event.submitter.name) {
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden'; hidden.name = event.submitter.name; hidden.value = event.submitter.value;
+        form.appendChild(hidden);
+      }
+      form.submit();
+    });
+  }, true);
+
+  // a dialog that opens by a button: <button data-open-dialog="id">
+  document.addEventListener('click', function (event) {
+    var opener = event.target.closest('[data-open-dialog]');
+    if (opener) {
+      var target = document.getElementById(opener.dataset.openDialog);
+      if (target && target.showModal) { event.preventDefault(); target.showModal(); }
+    }
+    var closer = event.target.closest('[data-close-dialog]');
+    if (closer) { var box = closer.closest('dialog'); if (box) { box.close(); } }
+  });
+})();
+
+
+// ---- the colour theme picker ---------------------------------------------------------------------------------------
+(function () {
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('[data-theme-choice]'));
+  if (!buttons.length) { return; }
+  function show() {
+    var now = document.documentElement.getAttribute('data-theme');
+    buttons.forEach(function (b) { b.setAttribute('aria-checked', b.dataset.themeChoice === now ? 'true' : 'false'); });
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.documentElement.setAttribute('data-theme', b.dataset.themeChoice);
+      try { localStorage.setItem('ci-theme', b.dataset.themeChoice); } catch (e) {}
+      show();
+    });
+  });
+  show();
+})();

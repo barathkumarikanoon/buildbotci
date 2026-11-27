@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Delete {{ profile.name }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="{% url 'repo_list' %}">Repositories</a> / <a href="{% url 'repo_edit' profile.key %}">{{ profile.name }}</a> / Delete</div>
+
+<div class="card wide confirm">
+  <h1>Delete {{ profile.name }}?</h1>
+  <p>This is what happens, in this order:</p>
+  <ol class="plan">
+    <li><strong>Its work is stopped.</strong>
+      {% if facts.open_runs %}<span class="badge failed">{{ facts.open_runs }} run{{ facts.open_runs|pluralize }} in progress</span> will be stopped and recorded as aborted.{% else %}No run is in progress.{% endif %}
+      Waiting requests in Buildbot are cancelled.</li>
+    <li><strong>The repository profile is deleted.</strong> The master then drops its builders <span class="mono">{{ builders|join:", " }}</span>, its schedulers and its workers (<span class="mono">{{ facts.workers|join:", " }}</span>) from the configuration and from Buildbot's database. Builders that have build history keep it unless you tick the last box below.</li>
+    <li><strong>The code is not touched.</strong> The clone <span class="mono">{{ config.repo_dir }}</span> stays exactly as it is.</li>
+  </ol>
+
+  <form method="post" class="stack" id="delete-form" data-key="{{ profile.key }}">
+    {% csrf_token %}
+    <label class="check">
+      <input type="checkbox" name="workers" value="1"{% if workers_default %} checked{% endif %}>
+      <span>Stop the workers on this machine and delete their folders
+      {% if facts.local_workers %}<span class="muted">({{ facts.local_workers|join:", " }})</span>{% else %}<span class="muted">(none of its workers has a folder here)</span>{% endif %}</span>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="results" value="1">
+      <span>Delete its results too <span class="muted">({% if facts.has_results %}<span class="mono">{{ facts.results_dir }}</span>{% else %}there are none{% endif %}; otherwise they stay on disk)</span></span>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="history" value="1">
+      <span>Erase Buildbot's own history of its builds too <span class="muted">(Buildbot's pages only; the results above are separate)</span></span>
+    </label>
+
+    <p class="muted">This cannot be undone. Type <span class="mono">{{ profile.key }}</span> to confirm.</p>
+    <div class="acts">
+      <input name="confirm" placeholder="{{ profile.key }}" autocomplete="off" required>
+      <button type="submit" class="btn danger" id="confirm-delete">Delete {{ profile.name }}…</button>
+      <a class="btn ghost" href="{% url 'repo_edit' profile.key %}">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<dialog id="delete-dialog" class="warn-dialog" aria-labelledby="delete-title">
+  <h2 id="delete-title">&#9888; Delete {{ profile.name }}?</h2>
+  <p><strong>This cannot be undone.</strong> The following will be deleted:</p>
+  <ul class="doomed">
+    <li>The repository profile <strong>{{ profile.name }}</strong> and all its settings: branches, schedule, test suite and worker setup.</li>
+    <li>{% if facts.open_runs %}<strong>{{ facts.open_runs }} run{{ facts.open_runs|pluralize }} in progress</strong> will be stopped and marked aborted. {% endif %}Its waiting requests in Buildbot are cancelled.</li>
+    <li>In Buildbot: the builders <span class="mono">{{ builders|join:", " }}</span>, all its schedulers, and its workers (<span class="mono">{{ facts.workers|join:", " }}</span>).</li>
+    <li data-when="workers">The worker processes and folders on this machine{% if facts.local_workers %}: <span class="mono">{{ facts.local_workers|join:", " }}</span>{% endif %}, with their checkouts.</li>
+    <li data-when="results"><strong>All results of this repository</strong>{% if facts.has_results %}: <span class="mono">{{ facts.results_dir }}</span>{% endif %}. They cannot be recovered.</li>
+    <li data-when="history">Buildbot's own history of this repository's builds.</li>
+  </ul>
+  <p class="muted">Not deleted: the code clone <span class="mono">{{ config.repo_dir }}</span>{% if facts.has_results %}<span data-when-not="results">; its results in <span class="mono">{{ facts.results_dir }}</span></span>{% endif %}<span data-when-not="history">; Buildbot's build history</span>.</p>
+  <div class="acts">
+    <button type="button" class="btn ghost" id="delete-cancel" autofocus>No, keep it</button>
+    <button type="button" class="btn danger" id="delete-go">Yes, delete everything listed</button>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts %}<script src="{% static 'repos/repo_delete.js' %}"></script>{% endblock %}
